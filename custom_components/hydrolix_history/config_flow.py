@@ -146,7 +146,11 @@ class HydrolixHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     project_uuid = user_input[CONF_PROJECT_SELECT]
                     # Resolve name from cache
                     project_name = next(
-                        (p["name"] for p in self._projects if p["uuid"] == project_uuid),
+                        (
+                            p["name"]
+                            for p in self._projects
+                            if p["uuid"] == project_uuid
+                        ),
                         "unknown",
                     )
                 else:
@@ -178,15 +182,21 @@ class HydrolixHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema_fields: dict[Any, Any] = {
             vol.Required(
-                CONF_PROJECT_MODE, default=MODE_EXISTING if has_projects else MODE_CREATE
+                CONF_PROJECT_MODE,
+                default=MODE_EXISTING if has_projects else MODE_CREATE,
             ): vol.In(
-                {MODE_EXISTING: "Use existing project", MODE_CREATE: "Create new project"}
+                {
+                    MODE_EXISTING: "Use existing project",
+                    MODE_CREATE: "Create new project",
+                }
             ),
         }
         if has_projects:
             schema_fields[vol.Optional(CONF_PROJECT_SELECT)] = vol.In(project_choices)
 
-        schema_fields[vol.Optional(CONF_PROJECT_NEW_NAME, default=DEFAULT_DATABASE)] = str
+        schema_fields[vol.Optional(CONF_PROJECT_NEW_NAME, default=DEFAULT_DATABASE)] = (
+            str
+        )
 
         return self.async_show_form(
             step_id="project",
@@ -241,9 +251,7 @@ class HydrolixHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     t.get("name") == HA_TRANSFORM_NAME for t in transforms
                 )
                 if not has_transform:
-                    await api.create_transform(
-                        self._org_uuid, project_uuid, table_uuid
-                    )
+                    await api.create_transform(self._org_uuid, project_uuid, table_uuid)
                     _LOGGER.info("Auto-created transform '%s'", HA_TRANSFORM_NAME)
                 else:
                     _LOGGER.info(
@@ -358,7 +366,9 @@ class HydrolixHistoryOptionsFlow(config_entries.OptionsFlow):
                     ): vol.All(int, vol.Range(min=1, max=10000)),
                     vol.Optional(
                         CONF_BATCH_INTERVAL,
-                        default=current.get(CONF_BATCH_INTERVAL, DEFAULT_BATCH_INTERVAL),
+                        default=current.get(
+                            CONF_BATCH_INTERVAL, DEFAULT_BATCH_INTERVAL
+                        ),
                     ): vol.All(int, vol.Range(min=1, max=300)),
                     vol.Optional(
                         CONF_INCLUDE_DOMAINS,

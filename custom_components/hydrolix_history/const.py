@@ -10,7 +10,9 @@ CONF_HYDROLIX_USE_SSL = "hydrolix_use_ssl"
 # Configuration keys - project / table / transform (stored after provisioning)
 CONF_HYDROLIX_PROJECT = "hydrolix_project"
 CONF_HYDROLIX_TABLE = "hydrolix_table"
-CONF_HYDROLIX_DATABASE = "hydrolix_database"  # kept for backward compat (= project name)
+CONF_HYDROLIX_DATABASE = (
+    "hydrolix_database"  # kept for backward compat (= project name)
+)
 CONF_ORG_UUID = "org_uuid"
 CONF_PROJECT_UUID = "project_uuid"
 CONF_TABLE_UUID = "table_uuid"

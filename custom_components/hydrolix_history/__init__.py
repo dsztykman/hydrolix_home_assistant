@@ -58,21 +58,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     host = config[CONF_HYDROLIX_HOST]
     # Project name doubles as the database name for queries
-    database = config.get(CONF_HYDROLIX_PROJECT, config.get(CONF_HYDROLIX_DATABASE, DEFAULT_DATABASE))
+    database = config.get(
+        CONF_HYDROLIX_PROJECT, config.get(CONF_HYDROLIX_DATABASE, DEFAULT_DATABASE)
+    )
     table = config.get(CONF_HYDROLIX_TABLE, DEFAULT_TABLE)
     token = config[CONF_HYDROLIX_TOKEN]
     use_ssl = config.get(CONF_HYDROLIX_USE_SSL, DEFAULT_USE_SSL)
     transform_name = config.get(CONF_TRANSFORM_NAME, "")
-    batch_size = options.get(CONF_BATCH_SIZE, config.get(CONF_BATCH_SIZE, DEFAULT_BATCH_SIZE))
+    batch_size = options.get(
+        CONF_BATCH_SIZE, config.get(CONF_BATCH_SIZE, DEFAULT_BATCH_SIZE)
+    )
     batch_interval = options.get(
         CONF_BATCH_INTERVAL, config.get(CONF_BATCH_INTERVAL, DEFAULT_BATCH_INTERVAL)
     )
 
     # Build entity filter from options (or config fallback)
     entity_filter = EntityFilter(
-        include_domains=options.get(CONF_INCLUDE_DOMAINS, config.get(CONF_INCLUDE_DOMAINS, [])),
-        exclude_domains=options.get(CONF_EXCLUDE_DOMAINS, config.get(CONF_EXCLUDE_DOMAINS, [])),
-        include_entities=options.get(CONF_INCLUDE_ENTITIES, config.get(CONF_INCLUDE_ENTITIES, [])),
+        include_domains=options.get(
+            CONF_INCLUDE_DOMAINS, config.get(CONF_INCLUDE_DOMAINS, [])
+        ),
+        exclude_domains=options.get(
+            CONF_EXCLUDE_DOMAINS, config.get(CONF_EXCLUDE_DOMAINS, [])
+        ),
+        include_entities=options.get(
+            CONF_INCLUDE_ENTITIES, config.get(CONF_INCLUDE_ENTITIES, [])
+        ),
         exclude_entities=options.get(
             CONF_EXCLUDE_ENTITIES, config.get(CONF_EXCLUDE_ENTITIES, [])
         ),

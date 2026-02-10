@@ -75,7 +75,8 @@ class StateEvent:
         try:
             # Filter out non-serialisable values; json datatype accepts dicts directly
             record["attributes"] = {
-                k: v for k, v in self.attributes.items()
+                k: v
+                for k, v in self.attributes.items()
                 if isinstance(v, (str, int, float, bool, list, dict, type(None)))
             }
         except (TypeError, ValueError):
@@ -123,10 +124,7 @@ class HydrolixClient:
 
         Format: https://$cluster/ingest/event?table=project.table&transform=name
         """
-        url = (
-            f"{self._base_url}/ingest/event"
-            f"?table={self._database}.{self._table}"
-        )
+        url = f"{self._base_url}/ingest/event?table={self._database}.{self._table}"
         if self._transform_name:
             url += f"&transform={self._transform_name}"
         return url
@@ -239,9 +237,7 @@ class HydrolixClient:
         self.stats.events_queued = len(self._queue)
 
         # Build the compressed payload once for all retry attempts
-        ndjson_payload = "\n".join(
-            json.dumps(record, default=str) for record in batch
-        )
+        ndjson_payload = "\n".join(json.dumps(record, default=str) for record in batch)
         raw_bytes = ndjson_payload.encode("utf-8")
         compressed = gzip.compress(raw_bytes)
 
@@ -263,9 +259,7 @@ class HydrolixClient:
                         self.stats.events_sent += len(batch)
                         self.stats.last_sent = datetime.now(timezone.utc)
                         self.stats.connected = True
-                        ratio = (
-                            len(raw_bytes) / len(compressed) if compressed else 0
-                        )
+                        ratio = len(raw_bytes) / len(compressed) if compressed else 0
                         _LOGGER.debug(
                             "Sent %d events to Hydrolix (total: %d, "
                             "gzip: %d→%d bytes, %.1fx)",
@@ -308,9 +302,7 @@ class HydrolixClient:
                         continue
 
                     # Non-retryable error — drop the batch
-                    self.stats.last_error = (
-                        f"HTTP {response.status}: {resp_body[:200]}"
-                    )
+                    self.stats.last_error = f"HTTP {response.status}: {resp_body[:200]}"
                     self.stats.events_dropped += len(batch)
                     _LOGGER.error(
                         "Hydrolix ingest failed (HTTP %s): %s",

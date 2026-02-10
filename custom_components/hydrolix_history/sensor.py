@@ -108,9 +108,7 @@ class HydrolixEventsDroppedSensor(HydrolixBaseSensor):
         self, client: HydrolixClient, entry: ConfigEntry, device_info: DeviceInfo
     ) -> None:
         """Initialize."""
-        super().__init__(
-            client, entry, device_info, "events_dropped", "Events Dropped"
-        )
+        super().__init__(client, entry, device_info, "events_dropped", "Events Dropped")
 
     async def async_update(self) -> None:
         """Update the sensor."""
@@ -128,9 +126,7 @@ class HydrolixEventsQueuedSensor(HydrolixBaseSensor):
         self, client: HydrolixClient, entry: ConfigEntry, device_info: DeviceInfo
     ) -> None:
         """Initialize."""
-        super().__init__(
-            client, entry, device_info, "events_queued", "Events Queued"
-        )
+        super().__init__(client, entry, device_info, "events_queued", "Events Queued")
 
     async def async_update(self) -> None:
         """Update the sensor."""
@@ -168,9 +164,7 @@ class HydrolixLastErrorSensor(HydrolixBaseSensor):
         self, client: HydrolixClient, entry: ConfigEntry, device_info: DeviceInfo
     ) -> None:
         """Initialize."""
-        super().__init__(
-            client, entry, device_info, "last_error", "Last Error"
-        )
+        super().__init__(client, entry, device_info, "last_error", "Last Error")
 
     async def async_update(self) -> None:
         """Update the sensor."""

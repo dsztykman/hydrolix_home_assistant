@@ -153,9 +153,7 @@ class HydrolixConfigAPI:
 
     async def _get(self, path: str) -> Any:
         session = await self._ensure_session()
-        async with session.get(
-            f"{self._base}{path}", headers=self._headers()
-        ) as resp:
+        async with session.get(f"{self._base}{path}", headers=self._headers()) as resp:
             body = await resp.json()
             if resp.status >= 400:
                 raise HydrolixConfigError(resp.status, str(body)[:500])
@@ -240,7 +238,9 @@ class HydrolixConfigAPI:
         payload = {"name": name, "description": description or f"{name} project"}
         result = await self._post(f"/orgs/{org_uuid}/projects/", payload)
         project = self._unwrap_single(result)
-        _LOGGER.info("Created Hydrolix project '%s' (uuid=%s)", name, project.get("uuid"))
+        _LOGGER.info(
+            "Created Hydrolix project '%s' (uuid=%s)", name, project.get("uuid")
+        )
         return project
 
     # ── tables ───────────────────────────────────────────────────────────
@@ -249,9 +249,7 @@ class HydrolixConfigAPI:
         self, org_uuid: str, project_uuid: str
     ) -> list[dict[str, Any]]:
         """List all tables in a project."""
-        body = await self._get(
-            f"/orgs/{org_uuid}/projects/{project_uuid}/tables/"
-        )
+        body = await self._get(f"/orgs/{org_uuid}/projects/{project_uuid}/tables/")
         return self._unwrap_list(body)
 
     async def create_table(
@@ -300,8 +298,7 @@ class HydrolixConfigAPI:
     ) -> list[dict[str, Any]]:
         """List transforms on a table."""
         body = await self._get(
-            f"/orgs/{org_uuid}/projects/{project_uuid}"
-            f"/tables/{table_uuid}/transforms/"
+            f"/orgs/{org_uuid}/projects/{project_uuid}/tables/{table_uuid}/transforms/"
         )
         return self._unwrap_list(body)
 
@@ -319,8 +316,7 @@ class HydrolixConfigAPI:
         """
         body = transform_body or HA_TRANSFORM_BODY
         result = await self._post(
-            f"/orgs/{org_uuid}/projects/{project_uuid}"
-            f"/tables/{table_uuid}/transforms/",
+            f"/orgs/{org_uuid}/projects/{project_uuid}/tables/{table_uuid}/transforms/",
             body,
         )
         transform = self._unwrap_single(result)
