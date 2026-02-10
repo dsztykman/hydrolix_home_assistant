@@ -44,7 +44,7 @@ HA_TRANSFORM_SCHEMA: list[dict[str, Any]] = [
     },
     {
         "name": "old_state",
-        "datatype": {"type": "string", "index": False, "default": ""},
+        "datatype": {"type": "string", "index": True, "default": ""},
     },
     {
         "name": "state_float",
@@ -56,7 +56,7 @@ HA_TRANSFORM_SCHEMA: list[dict[str, Any]] = [
             "type": "datetime",
             "format": "2006-01-02T15:04:05.000000Z07:00",
             "resolution": "ms",
-            "index": False,
+            "index": True,
         },
     },
     {
@@ -65,7 +65,7 @@ HA_TRANSFORM_SCHEMA: list[dict[str, Any]] = [
             "type": "datetime",
             "format": "2006-01-02T15:04:05.000000Z07:00",
             "resolution": "ms",
-            "index": False,
+            "index": True,
         },
     },
     {
@@ -82,7 +82,7 @@ HA_TRANSFORM_SCHEMA: list[dict[str, Any]] = [
     },
     {
         "name": "icon",
-        "datatype": {"type": "string", "index": False, "default": ""},
+        "datatype": {"type": "string", "index": True, "default": ""},
     },
     {
         "name": "attributes",

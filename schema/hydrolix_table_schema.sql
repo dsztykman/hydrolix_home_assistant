@@ -68,7 +68,7 @@
       "name": "old_state",
       "datatype": {
         "type": "string",
-        "index": false,
+        "index": true,
         "default": ""
       }
     },
@@ -86,7 +86,7 @@
         "type": "datetime",
         "format": "2006-01-02T15:04:05.000000Z07:00",
         "resolution": "ms",
-        "index": false
+        "index": true
       }
     },
     {
@@ -95,7 +95,7 @@
         "type": "datetime",
         "format": "2006-01-02T15:04:05.000000Z07:00",
         "resolution": "ms",
-        "index": false
+        "index": true
       }
     },
     {
@@ -126,7 +126,7 @@
       "name": "icon",
       "datatype": {
         "type": "string",
-        "index": false,
+        "index": true,
         "default": ""
       }
     },

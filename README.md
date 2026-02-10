@@ -81,14 +81,14 @@ The auto-created transform includes:
 | `entity_id` | `string` | ✅ | e.g., `sensor.living_room_temperature` |
 | `domain` | `string` | ✅ | e.g., `sensor`, `light`, `climate` |
 | `state` | `string` | ✅ | The new state value |
-| `old_state` | `string` | | The previous state value |
+| `old_state` | `string` | ✅ | The previous state value |
 | `state_float` | `double` | | Numeric parse of `state` (0 if non-numeric) |
-| `last_changed` | `datetime` | | HA last_changed timestamp |
-| `last_updated` | `datetime` | | HA last_updated timestamp |
+| `last_changed` | `datetime` | ✅ | HA last_changed timestamp |
+| `last_updated` | `datetime` | ✅ | HA last_updated timestamp |
 | `friendly_name` | `string` | ✅ | Human-readable entity name |
 | `device_class` | `string` | ✅ | e.g., `temperature`, `humidity` |
 | `unit_of_measurement` | `string` | ✅ | e.g., `°C`, `%`, `W` |
-| `icon` | `string` | | MDI icon name |
+| `icon` | `string` | ✅ | MDI icon name |
 | `attributes` | `json` | | Full entity attributes as native JSON |
 
 The transform is marked as the **default** transform for the table, so no `x-hdx-transform` header is needed at ingest time.
