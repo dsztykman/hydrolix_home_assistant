@@ -17,6 +17,12 @@ import gzip
 
 _LOGGER = logging.getLogger(__name__)
 
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+_MAX_RETRIES = 5
+_INITIAL_BACKOFF = 1.0  # seconds
+_MAX_BACKOFF = 60.0  # seconds
+_BACKOFF_FACTOR = 2.0
+
 
 @dataclass
 class HydrolixStats:
@@ -233,59 +239,119 @@ class HydrolixClient:
 
         self.stats.events_queued = len(self._queue)
 
-        try:
-            # Hydrolix supports NDJSON (newline-delimited JSON) ingest
-            ndjson_payload = "\n".join(json.dumps(record, default=str) for record in batch)
-            raw_bytes = ndjson_payload.encode("utf-8")
+        # Build the compressed payload once for all retry attempts
+        ndjson_payload = "\n".join(
+            json.dumps(record, default=str) for record in batch
+        )
+        raw_bytes = ndjson_payload.encode("utf-8")
+        compressed = gzip.compress(raw_bytes)
 
-            headers = self._get_headers()
-            headers["Content-Type"] = "application/json"
+        backoff = _INITIAL_BACKOFF
 
-            # gzip compress the body — Hydrolix ingest supports Content-Encoding: gzip
-            body = gzip.compress(raw_bytes)
-            headers["Content-Encoding"] = "gzip"
+        for attempt in range(_MAX_RETRIES):
+            try:
+                headers = self._get_headers()
+                headers["Content-Type"] = "application/json"
+                headers["Content-Encoding"] = "gzip"
 
-            async with self._session.post(
-                self.ingest_url,
-                data=body,
-                headers=headers,
-                ssl=self._use_ssl,
-            ) as response:
-                if response.status in (200, 201, 204):
-                    self.stats.events_sent += len(batch)
-                    self.stats.last_sent = datetime.now(timezone.utc)
-                    self.stats.connected = True
-                    ratio = len(raw_bytes) / len(body) if body else 0
-                    _LOGGER.debug(
-                        "Sent %d events to Hydrolix (total: %d, "
-                        "gzip: %d→%d bytes, %.1fx)",
-                        len(batch),
-                        self.stats.events_sent,
-                        len(raw_bytes),
-                        len(body),
-                        ratio,
-                    )
-                else:
-                    body = await response.text()
+                async with self._session.post(
+                    self.ingest_url,
+                    data=compressed,
+                    headers=headers,
+                    ssl=self._use_ssl,
+                ) as response:
+                    if response.status in (200, 201, 204):
+                        self.stats.events_sent += len(batch)
+                        self.stats.last_sent = datetime.now(timezone.utc)
+                        self.stats.connected = True
+                        ratio = (
+                            len(raw_bytes) / len(compressed) if compressed else 0
+                        )
+                        _LOGGER.debug(
+                            "Sent %d events to Hydrolix (total: %d, "
+                            "gzip: %d→%d bytes, %.1fx)",
+                            len(batch),
+                            self.stats.events_sent,
+                            len(raw_bytes),
+                            len(compressed),
+                            ratio,
+                        )
+                        return
+
+                    resp_body = await response.text()
+
+                    if response.status in _RETRYABLE_STATUS_CODES:
+                        # Honour Retry-After header if present
+                        retry_after = response.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                delay = float(retry_after)
+                            except (ValueError, TypeError):
+                                delay = backoff
+                        else:
+                            delay = backoff
+
+                        delay = min(delay, _MAX_BACKOFF)
+                        _LOGGER.warning(
+                            "Hydrolix ingest returned %s, retrying in %.1fs "
+                            "(attempt %d/%d): %s",
+                            response.status,
+                            delay,
+                            attempt + 1,
+                            _MAX_RETRIES,
+                            resp_body[:200],
+                        )
+                        self.stats.last_error = (
+                            f"HTTP {response.status}: {resp_body[:200]}"
+                        )
+                        await asyncio.sleep(delay)
+                        backoff = min(backoff * _BACKOFF_FACTOR, _MAX_BACKOFF)
+                        continue
+
+                    # Non-retryable error — drop the batch
                     self.stats.last_error = (
-                        f"HTTP {response.status}: {body[:200]}"
+                        f"HTTP {response.status}: {resp_body[:200]}"
                     )
                     self.stats.events_dropped += len(batch)
                     _LOGGER.error(
                         "Hydrolix ingest failed (HTTP %s): %s",
                         response.status,
-                        body[:500],
+                        resp_body[:500],
                     )
+                    return
 
-        except aiohttp.ClientError as err:
-            self.stats.connected = False
-            self.stats.last_error = str(err)
-            self.stats.events_dropped += len(batch)
-            _LOGGER.error("Failed to send events to Hydrolix: %s", err)
-        except Exception as err:
-            self.stats.last_error = str(err)
-            self.stats.events_dropped += len(batch)
-            _LOGGER.error("Unexpected error sending to Hydrolix: %s", err)
+            except aiohttp.ClientError as err:
+                self.stats.connected = False
+                self.stats.last_error = str(err)
+                if attempt < _MAX_RETRIES - 1:
+                    _LOGGER.warning(
+                        "Hydrolix request failed, retrying in %.1fs "
+                        "(attempt %d/%d): %s",
+                        backoff,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        err,
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * _BACKOFF_FACTOR, _MAX_BACKOFF)
+                    continue
+                self.stats.events_dropped += len(batch)
+                _LOGGER.error("Failed to send events to Hydrolix: %s", err)
+                return
+
+            except Exception as err:
+                self.stats.last_error = str(err)
+                self.stats.events_dropped += len(batch)
+                _LOGGER.error("Unexpected error sending to Hydrolix: %s", err)
+                return
+
+        # All retries exhausted
+        self.stats.events_dropped += len(batch)
+        _LOGGER.error(
+            "Hydrolix ingest failed after %d retries, dropping %d events",
+            _MAX_RETRIES,
+            len(batch),
+        )
 
     def _get_headers(self) -> dict[str, str]:
         """Get HTTP headers for Hydrolix API requests."""
