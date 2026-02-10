@@ -1,0 +1,12 @@
+{
+  "domain": "hydrolix_history",
+  "name": "Hydrolix History",
+  "codeowners": ["@dsztykman"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/dsztykman/hydrolix_home_assistant",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/dsztykman/hydrolix_home_assistant/issues",
+  "requirements": ["aiohttp>=3.8.0"],
+  "version": "0.1.0"
+}

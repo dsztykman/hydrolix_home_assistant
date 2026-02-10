@@ -1,0 +1,81 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Hydrolix",
+        "description": "Enter your Hydrolix cluster connection details. The integration will use the Config API to discover and provision resources.",
+        "data": {
+          "hydrolix_host": "Hydrolix Hostname",
+          "hydrolix_token": "API / Bearer Token",
+          "hydrolix_use_ssl": "Use SSL/TLS"
+        },
+        "data_description": {
+          "hydrolix_host": "Hostname of your Hydrolix cluster (e.g., my-cluster.hydrolix.live)",
+          "hydrolix_token": "Bearer token for authentication (must have config + ingest permissions)",
+          "hydrolix_use_ssl": "Enable HTTPS for all connections"
+        }
+      },
+      "project": {
+        "title": "Select or Create a Project",
+        "description": "A Hydrolix project is a container for tables. Choose an existing project or create a new one for your Home Assistant data.",
+        "data": {
+          "project_mode": "Action",
+          "project_select": "Existing Project",
+          "project_new_name": "New Project Name"
+        },
+        "data_description": {
+          "project_mode": "Use an existing project or create a new one",
+          "project_select": "Select from your available projects",
+          "project_new_name": "Name for the new project (used in SQL queries as the database name)"
+        }
+      },
+      "table": {
+        "title": "Select or Create a Table",
+        "description": "Choose an existing table in project \"{project_name}\" or create a new one. The write transform for Home Assistant state data will be configured automatically.",
+        "data": {
+          "table_mode": "Action",
+          "table_select": "Existing Table",
+          "table_new_name": "New Table Name"
+        },
+        "data_description": {
+          "table_mode": "Use an existing table or create a new one",
+          "table_select": "Select from available tables",
+          "table_new_name": "Name for the new table (used in SQL queries)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the Hydrolix Config API. Check the hostname, token, and that your IP is allowlisted.",
+      "project_error": "Failed to list or create the project. Check your token has project-level permissions.",
+      "table_error": "Failed to create the table or transform. Check your token has admin or publisher permissions.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This Hydrolix project + table combination is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hydrolix History Options",
+        "description": "Configure batching and entity filtering. Use comma-separated values for domain and entity lists.",
+        "data": {
+          "batch_size": "Batch Size",
+          "batch_interval": "Batch Interval (seconds)",
+          "include_domains": "Include Domains",
+          "exclude_domains": "Exclude Domains",
+          "include_entities": "Include Entity IDs",
+          "exclude_entities": "Exclude Entity IDs"
+        },
+        "data_description": {
+          "batch_size": "Number of events to send per batch (1–10000)",
+          "batch_interval": "How often to flush the event queue in seconds (1–300)",
+          "include_domains": "Only record these domains (comma-separated, e.g., sensor, climate)",
+          "exclude_domains": "Never record these domains (comma-separated, e.g., automation, script)",
+          "include_entities": "Only record these entities (comma-separated)",
+          "exclude_entities": "Never record these entities (comma-separated)"
+        }
+      }
+    }
+  }
+}
