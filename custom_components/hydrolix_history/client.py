@@ -259,6 +259,7 @@ class HydrolixClient:
                         self.stats.events_sent += len(batch)
                         self.stats.last_sent = datetime.now(timezone.utc)
                         self.stats.connected = True
+                        self.stats.last_error = None
                         ratio = len(raw_bytes) / len(compressed) if compressed else 0
                         _LOGGER.debug(
                             "Sent %d events to Hydrolix (total: %d, "
