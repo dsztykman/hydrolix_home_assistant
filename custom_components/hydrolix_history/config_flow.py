@@ -20,6 +20,14 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .config_api import HydrolixConfigAPI, HydrolixConfigError, HA_TRANSFORM_NAME
 from .const import (
@@ -347,15 +355,26 @@ class HydrolixHistoryOptionsFlow(config_entries.OptionsFlow):
                 CONF_INCLUDE_ENTITIES,
                 CONF_EXCLUDE_ENTITIES,
             ):
-                val = user_input.get(key, "")
-                if isinstance(val, str):
-                    parsed[key] = [s.strip() for s in val.split(",") if s.strip()]
-                else:
-                    parsed[key] = val
+                parsed[key] = user_input.get(key, [])
 
             return self.async_create_entry(title="", data=parsed)
 
         current = self._config_entry.options
+
+        # Discover all domains from the entity registry
+        registry = er.async_get(self.hass)
+        all_domains = sorted({e.domain for e in registry.entities.values()})
+
+        domain_selector = SelectSelector(
+            SelectSelectorConfig(
+                options=all_domains,
+                multiple=True,
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        )
+
+        entity_selector = EntitySelector(EntitySelectorConfig(multiple=True))
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -372,20 +391,20 @@ class HydrolixHistoryOptionsFlow(config_entries.OptionsFlow):
                     ): vol.All(int, vol.Range(min=1, max=300)),
                     vol.Optional(
                         CONF_INCLUDE_DOMAINS,
-                        default=", ".join(current.get(CONF_INCLUDE_DOMAINS, [])),
-                    ): str,
+                        default=current.get(CONF_INCLUDE_DOMAINS, []),
+                    ): domain_selector,
                     vol.Optional(
                         CONF_EXCLUDE_DOMAINS,
-                        default=", ".join(current.get(CONF_EXCLUDE_DOMAINS, [])),
-                    ): str,
+                        default=current.get(CONF_EXCLUDE_DOMAINS, []),
+                    ): domain_selector,
                     vol.Optional(
                         CONF_INCLUDE_ENTITIES,
-                        default=", ".join(current.get(CONF_INCLUDE_ENTITIES, [])),
-                    ): str,
+                        default=current.get(CONF_INCLUDE_ENTITIES, []),
+                    ): entity_selector,
                     vol.Optional(
                         CONF_EXCLUDE_ENTITIES,
-                        default=", ".join(current.get(CONF_EXCLUDE_ENTITIES, [])),
-                    ): str,
+                        default=current.get(CONF_EXCLUDE_ENTITIES, []),
+                    ): entity_selector,
                 }
             ),
         )
