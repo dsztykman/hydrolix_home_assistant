@@ -33,6 +33,7 @@ from .config_api import HydrolixConfigAPI, HydrolixConfigError, HA_TRANSFORM_NAM
 from .const import (
     CONF_BATCH_INTERVAL,
     CONF_BATCH_SIZE,
+    CONF_EXCLUDE_DEVICE_CLASSES,
     CONF_EXCLUDE_DOMAINS,
     CONF_EXCLUDE_ENTITIES,
     CONF_HYDROLIX_HOST,
@@ -40,6 +41,7 @@ from .const import (
     CONF_HYDROLIX_TABLE,
     CONF_HYDROLIX_TOKEN,
     CONF_HYDROLIX_USE_SSL,
+    CONF_INCLUDE_DEVICE_CLASSES,
     CONF_INCLUDE_DOMAINS,
     CONF_INCLUDE_ENTITIES,
     CONF_ORG_UUID,
@@ -354,6 +356,8 @@ class HydrolixHistoryOptionsFlow(config_entries.OptionsFlow):
                 CONF_EXCLUDE_DOMAINS,
                 CONF_INCLUDE_ENTITIES,
                 CONF_EXCLUDE_ENTITIES,
+                CONF_INCLUDE_DEVICE_CLASSES,
+                CONF_EXCLUDE_DEVICE_CLASSES,
             ):
                 parsed[key] = user_input.get(key, [])
 
@@ -361,13 +365,24 @@ class HydrolixHistoryOptionsFlow(config_entries.OptionsFlow):
 
         current = self._config_entry.options
 
-        # Discover all domains from the entity registry
+        # Discover all domains and device classes from the entity registry
         registry = er.async_get(self.hass)
         all_domains = sorted({e.domain for e in registry.entities.values()})
+        all_device_classes = sorted(
+            {e.device_class for e in registry.entities.values() if e.device_class}
+        )
 
         domain_selector = SelectSelector(
             SelectSelectorConfig(
                 options=all_domains,
+                multiple=True,
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        )
+
+        device_class_selector = SelectSelector(
+            SelectSelectorConfig(
+                options=all_device_classes,
                 multiple=True,
                 mode=SelectSelectorMode.DROPDOWN,
             )
@@ -405,6 +420,14 @@ class HydrolixHistoryOptionsFlow(config_entries.OptionsFlow):
                         CONF_EXCLUDE_ENTITIES,
                         default=current.get(CONF_EXCLUDE_ENTITIES, []),
                     ): entity_selector,
+                    vol.Optional(
+                        CONF_INCLUDE_DEVICE_CLASSES,
+                        default=current.get(CONF_INCLUDE_DEVICE_CLASSES, []),
+                    ): device_class_selector,
+                    vol.Optional(
+                        CONF_EXCLUDE_DEVICE_CLASSES,
+                        default=current.get(CONF_EXCLUDE_DEVICE_CLASSES, []),
+                    ): device_class_selector,
                 }
             ),
         )

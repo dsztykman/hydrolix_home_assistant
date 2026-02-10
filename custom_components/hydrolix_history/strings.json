@@ -65,7 +65,9 @@
           "include_domains": "Include Domains",
           "exclude_domains": "Exclude Domains",
           "include_entities": "Include Entity IDs",
-          "exclude_entities": "Exclude Entity IDs"
+          "exclude_entities": "Exclude Entity IDs",
+          "include_device_classes": "Include Device Classes",
+          "exclude_device_classes": "Exclude Device Classes"
         },
         "data_description": {
           "batch_size": "Number of events to send per batch (1–10000)",
@@ -73,7 +75,9 @@
           "include_domains": "Only record these domains (comma-separated, e.g., sensor, climate)",
           "exclude_domains": "Never record these domains (comma-separated, e.g., automation, script)",
           "include_entities": "Only record these entities (comma-separated)",
-          "exclude_entities": "Never record these entities (comma-separated)"
+          "exclude_entities": "Never record these entities (comma-separated)",
+          "include_device_classes": "Only record entities with these device classes (e.g., temperature, humidity)",
+          "exclude_device_classes": "Never record entities with these device classes (e.g., motion, battery)"
         }
       }
     }

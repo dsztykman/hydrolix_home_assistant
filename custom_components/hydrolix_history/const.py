@@ -27,6 +27,8 @@ CONF_INCLUDE_ENTITIES = "include_entities"
 CONF_EXCLUDE_ENTITIES = "exclude_entities"
 CONF_INCLUDE_ENTITY_GLOBS = "include_entity_globs"
 CONF_EXCLUDE_ENTITY_GLOBS = "exclude_entity_globs"
+CONF_INCLUDE_DEVICE_CLASSES = "include_device_classes"
+CONF_EXCLUDE_DEVICE_CLASSES = "exclude_device_classes"
 
 # Config-flow provisioning step keys
 CONF_PROJECT_MODE = "project_mode"  # "existing" | "create"

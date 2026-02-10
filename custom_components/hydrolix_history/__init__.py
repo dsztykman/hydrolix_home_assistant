@@ -21,6 +21,7 @@ from .client import HydrolixClient, StateEvent
 from .const import (
     CONF_BATCH_INTERVAL,
     CONF_BATCH_SIZE,
+    CONF_EXCLUDE_DEVICE_CLASSES,
     CONF_EXCLUDE_DOMAINS,
     CONF_EXCLUDE_ENTITIES,
     CONF_EXCLUDE_ENTITY_GLOBS,
@@ -30,6 +31,7 @@ from .const import (
     CONF_HYDROLIX_TABLE,
     CONF_HYDROLIX_TOKEN,
     CONF_HYDROLIX_USE_SSL,
+    CONF_INCLUDE_DEVICE_CLASSES,
     CONF_INCLUDE_DOMAINS,
     CONF_INCLUDE_ENTITIES,
     CONF_INCLUDE_ENTITY_GLOBS,
@@ -92,6 +94,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         exclude_entity_globs=options.get(
             CONF_EXCLUDE_ENTITY_GLOBS, config.get(CONF_EXCLUDE_ENTITY_GLOBS, [])
         ),
+        include_device_classes=options.get(
+            CONF_INCLUDE_DEVICE_CLASSES, config.get(CONF_INCLUDE_DEVICE_CLASSES, [])
+        ),
+        exclude_device_classes=options.get(
+            CONF_EXCLUDE_DEVICE_CLASSES, config.get(CONF_EXCLUDE_DEVICE_CLASSES, [])
+        ),
     )
 
     # Create the Hydrolix client
@@ -135,7 +143,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entity_id = new_state.entity_id
 
         # Apply entity filter
-        if not entity_filter.should_record(entity_id):
+        device_class = new_state.attributes.get("device_class")
+        if not entity_filter.should_record(entity_id, device_class=device_class):
             return
 
         old_state: State | None = event.data.get("old_state")
