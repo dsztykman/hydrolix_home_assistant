@@ -7,8 +7,6 @@ of the Hydrolix history pipeline.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -16,10 +14,9 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval
 
 from .client import HydrolixClient
 from .const import DOMAIN

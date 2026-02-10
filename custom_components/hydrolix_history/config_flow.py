@@ -18,7 +18,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .config_api import HydrolixConfigAPI, HydrolixConfigError, HA_TRANSFORM_NAME
@@ -118,7 +118,7 @@ class HydrolixHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("Config API error: %s", exc)
                 errors["base"] = "cannot_connect"
                 await self._cleanup_api()
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected error during connection test")
                 errors["base"] = "cannot_connect"
                 await self._cleanup_api()

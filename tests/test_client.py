@@ -1,10 +1,10 @@
 """Tests for the Hydrolix client StateEvent serialization."""
 
+import asyncio
 import sys
 import os
 import gzip
 import json
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,7 +14,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "custom_compone
 from client import (
     StateEvent,
     HydrolixClient,
-    _RETRYABLE_STATUS_CODES,
     _MAX_RETRIES,
     _INITIAL_BACKOFF,
     _BACKOFF_FACTOR,
@@ -269,121 +268,133 @@ def _mock_response(status, body="", headers=None):
 class TestRetryBackoff:
     """Test retry with exponential backoff on retryable errors."""
 
-    @pytest.mark.asyncio
-    @patch("client.asyncio.sleep", new_callable=AsyncMock)
-    async def test_429_retries_then_succeeds(self, mock_sleep):
+    def test_429_retries_then_succeeds(self):
         """A 429 followed by a 200 should succeed without dropping events."""
-        client = _make_client()
-        client.enqueue(_make_event())
+        async def _run():
+            client = _make_client()
+            client.enqueue(_make_event())
 
-        client._session.post = MagicMock(side_effect=[
-            _mock_response(429, "rate limited"),
-            _mock_response(429, "rate limited"),
-            _mock_response(200),
-        ])
+            client._session.post = MagicMock(side_effect=[
+                _mock_response(429, "rate limited"),
+                _mock_response(429, "rate limited"),
+                _mock_response(200),
+            ])
 
-        await client._flush()
+            with patch("client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await client._flush()
 
-        assert client.stats.events_sent == 1
-        assert client.stats.events_dropped == 0
-        assert mock_sleep.call_count == 2
-        # Verify exponential backoff: 1s, 2s
-        assert mock_sleep.call_args_list[0].args[0] == _INITIAL_BACKOFF
-        assert mock_sleep.call_args_list[1].args[0] == _INITIAL_BACKOFF * _BACKOFF_FACTOR
+            assert client.stats.events_sent == 1
+            assert client.stats.events_dropped == 0
+            assert mock_sleep.call_count == 2
+            # Verify exponential backoff: 1s, 2s
+            assert mock_sleep.call_args_list[0].args[0] == _INITIAL_BACKOFF
+            assert mock_sleep.call_args_list[1].args[0] == _INITIAL_BACKOFF * _BACKOFF_FACTOR
 
-    @pytest.mark.asyncio
-    @patch("client.asyncio.sleep", new_callable=AsyncMock)
-    async def test_retries_exhausted_drops_batch(self, mock_sleep):
+        asyncio.run(_run())
+
+    def test_retries_exhausted_drops_batch(self):
         """When all retries fail, events should be dropped."""
-        client = _make_client()
-        client.enqueue(_make_event())
+        async def _run():
+            client = _make_client()
+            client.enqueue(_make_event())
 
-        client._session.post = MagicMock(side_effect=[
-            _mock_response(429, "rate limited")
-            for _ in range(_MAX_RETRIES)
-        ])
+            client._session.post = MagicMock(side_effect=[
+                _mock_response(429, "rate limited")
+                for _ in range(_MAX_RETRIES)
+            ])
 
-        await client._flush()
+            with patch("client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await client._flush()
 
-        assert client.stats.events_sent == 0
-        assert client.stats.events_dropped == 1
-        assert mock_sleep.call_count == _MAX_RETRIES
+            assert client.stats.events_sent == 0
+            assert client.stats.events_dropped == 1
+            assert mock_sleep.call_count == _MAX_RETRIES
 
-    @pytest.mark.asyncio
-    @patch("client.asyncio.sleep", new_callable=AsyncMock)
-    async def test_500_is_retryable(self, mock_sleep):
+        asyncio.run(_run())
+
+    def test_500_is_retryable(self):
         """Server errors (500, 502, 503, 504) should be retried."""
-        client = _make_client()
-        client.enqueue(_make_event())
+        async def _run():
+            client = _make_client()
+            client.enqueue(_make_event())
 
-        client._session.post = MagicMock(side_effect=[
-            _mock_response(500, "internal error"),
-            _mock_response(503, "unavailable"),
-            _mock_response(200),
-        ])
+            client._session.post = MagicMock(side_effect=[
+                _mock_response(500, "internal error"),
+                _mock_response(503, "unavailable"),
+                _mock_response(200),
+            ])
 
-        await client._flush()
+            with patch("client.asyncio.sleep", new_callable=AsyncMock):
+                await client._flush()
 
-        assert client.stats.events_sent == 1
-        assert client.stats.events_dropped == 0
+            assert client.stats.events_sent == 1
+            assert client.stats.events_dropped == 0
 
-    @pytest.mark.asyncio
-    @patch("client.asyncio.sleep", new_callable=AsyncMock)
-    async def test_400_not_retried(self, mock_sleep):
+        asyncio.run(_run())
+
+    def test_400_not_retried(self):
         """Non-retryable errors (e.g. 400) should fail immediately."""
-        client = _make_client()
-        client.enqueue(_make_event())
+        async def _run():
+            client = _make_client()
+            client.enqueue(_make_event())
 
-        client._session.post = MagicMock(side_effect=[
-            _mock_response(400, "bad request"),
-        ])
+            client._session.post = MagicMock(side_effect=[
+                _mock_response(400, "bad request"),
+            ])
 
-        await client._flush()
+            with patch("client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await client._flush()
 
-        assert client.stats.events_sent == 0
-        assert client.stats.events_dropped == 1
-        assert mock_sleep.call_count == 0
+            assert client.stats.events_sent == 0
+            assert client.stats.events_dropped == 1
+            assert mock_sleep.call_count == 0
 
-    @pytest.mark.asyncio
-    @patch("client.asyncio.sleep", new_callable=AsyncMock)
-    async def test_retry_after_header_honoured(self, mock_sleep):
+        asyncio.run(_run())
+
+    def test_retry_after_header_honoured(self):
         """Retry-After header value should be used as the delay."""
-        client = _make_client()
-        client.enqueue(_make_event())
+        async def _run():
+            client = _make_client()
+            client.enqueue(_make_event())
 
-        client._session.post = MagicMock(side_effect=[
-            _mock_response(429, "rate limited", headers={"Retry-After": "7"}),
-            _mock_response(200),
-        ])
+            client._session.post = MagicMock(side_effect=[
+                _mock_response(429, "rate limited", headers={"Retry-After": "7"}),
+                _mock_response(200),
+            ])
 
-        await client._flush()
+            with patch("client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await client._flush()
 
-        assert client.stats.events_sent == 1
-        assert mock_sleep.call_count == 1
-        assert mock_sleep.call_args_list[0].args[0] == 7.0
+            assert client.stats.events_sent == 1
+            assert mock_sleep.call_count == 1
+            assert mock_sleep.call_args_list[0].args[0] == 7.0
 
-    @pytest.mark.asyncio
-    @patch("client.asyncio.sleep", new_callable=AsyncMock)
-    async def test_connection_error_retried(self, mock_sleep):
+        asyncio.run(_run())
+
+    def test_connection_error_retried(self):
         """Network errors should be retried with backoff."""
         import aiohttp
 
-        client = _make_client()
-        client.enqueue(_make_event())
+        async def _run():
+            client = _make_client()
+            client.enqueue(_make_event())
 
-        error_ctx = MagicMock()
-        error_ctx.__aenter__ = AsyncMock(
-            side_effect=aiohttp.ClientError("connection reset")
-        )
-        error_ctx.__aexit__ = AsyncMock(return_value=False)
+            error_ctx = MagicMock()
+            error_ctx.__aenter__ = AsyncMock(
+                side_effect=aiohttp.ClientError("connection reset")
+            )
+            error_ctx.__aexit__ = AsyncMock(return_value=False)
 
-        client._session.post = MagicMock(side_effect=[
-            error_ctx,
-            _mock_response(200),
-        ])
+            client._session.post = MagicMock(side_effect=[
+                error_ctx,
+                _mock_response(200),
+            ])
 
-        await client._flush()
+            with patch("client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await client._flush()
 
-        assert client.stats.events_sent == 1
-        assert client.stats.events_dropped == 0
-        assert mock_sleep.call_count == 1
+            assert client.stats.events_sent == 1
+            assert client.stats.events_dropped == 0
+            assert mock_sleep.call_count == 1
+
+        asyncio.run(_run())

@@ -13,13 +13,8 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
-
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    EVENT_STATE_CHANGED,
-    MATCH_ALL,
-)
+from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, State, callback
 
 from .client import HydrolixClient, StateEvent
