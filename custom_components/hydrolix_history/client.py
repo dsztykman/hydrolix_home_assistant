@@ -17,9 +17,9 @@ import gzip
 _LOGGER = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-_MAX_RETRIES = 5
+_MAX_RETRIES = 50
 _INITIAL_BACKOFF = 1.0  # seconds
-_MAX_BACKOFF = 60.0  # seconds
+_MAX_BACKOFF = 600.0  # seconds
 _BACKOFF_FACTOR = 2.0
 
 
