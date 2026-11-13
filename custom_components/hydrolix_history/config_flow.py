@@ -1,10 +1,14 @@
 """Config flow for Hydrolix History integration.
 
-Single-step flow: enter the cluster host, an ingest token, and the
-project / table to stream into. Nothing is provisioned from Home
-Assistant: the project and table must already exist, and Schema
-Intelligence (Autopilot) provides a transform that accepts every event
-and promotes fields once enough data has built confidence in them.
+Single-step flow: enter the ingest URL and an ingest token. The URL names
+the cluster, the project and table, and optionally a transform:
+
+    https://host/ingest/event?table=project.table&transform=name
+
+Nothing is provisioned from Home Assistant: the project and table must
+already exist. Without a transform, Schema Intelligence (Autopilot)
+provides one that accepts every event and promotes fields once enough
+data has built confidence in them.
 
 Options flow allows tuning batch params and entity filters at any time.
 """
@@ -12,7 +16,6 @@ Options flow allows tuning batch params and entity filters at any time.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 import voluptuous as vol
@@ -31,7 +34,7 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .client import HydrolixClient
+from .client import HydrolixClient, IngestUrlError, parse_ingest_url
 from .const import (
     CONF_BATCH_INTERVAL,
     CONF_BATCH_SIZE,
@@ -42,41 +45,34 @@ from .const import (
     CONF_HYDROLIX_PROJECT,
     CONF_HYDROLIX_TABLE,
     CONF_HYDROLIX_TOKEN,
+    CONF_HYDROLIX_TRANSFORM,
     CONF_HYDROLIX_USE_SSL,
     CONF_INCLUDE_DEVICE_CLASSES,
     CONF_INCLUDE_DOMAINS,
     CONF_INCLUDE_ENTITIES,
+    CONF_INGEST_URL,
     DEFAULT_BATCH_INTERVAL,
     DEFAULT_BATCH_SIZE,
-    DEFAULT_PROJECT,
-    DEFAULT_TABLE,
-    DEFAULT_USE_SSL,
     DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Project and table names end up in the ingest URL and in SQL.
-_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_EXAMPLE_URL = (
+    "https://my-cluster.hydrolix.live/ingest/event"
+    "?table=myproject.mytable&transform=mytransform"
+)
 
 STEP_USER_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_HYDROLIX_HOST): str,
+        vol.Required(CONF_INGEST_URL): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.URL)
+        ),
         vol.Required(CONF_HYDROLIX_TOKEN): TextSelector(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
-        vol.Required(CONF_HYDROLIX_PROJECT, default=DEFAULT_PROJECT): str,
-        vol.Required(CONF_HYDROLIX_TABLE, default=DEFAULT_TABLE): str,
-        vol.Optional(CONF_HYDROLIX_USE_SSL, default=DEFAULT_USE_SSL): bool,
     }
 )
-
-
-def _clean_host(value: str) -> str:
-    """Reduce a pasted URL to a bare hostname."""
-    host = value.strip()
-    host = re.sub(r"^https?://", "", host, flags=re.IGNORECASE)
-    return host.split("/", 1)[0]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -92,45 +88,47 @@ class HydrolixHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Collect host, ingest token and target table."""
+        """Collect the ingest URL and ingest token."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            data = {
-                CONF_HYDROLIX_HOST: _clean_host(user_input[CONF_HYDROLIX_HOST]),
-                CONF_HYDROLIX_TOKEN: user_input[CONF_HYDROLIX_TOKEN].strip(),
-                CONF_HYDROLIX_PROJECT: user_input[CONF_HYDROLIX_PROJECT].strip(),
-                CONF_HYDROLIX_TABLE: user_input[CONF_HYDROLIX_TABLE].strip(),
-                CONF_HYDROLIX_USE_SSL: user_input.get(
-                    CONF_HYDROLIX_USE_SSL, DEFAULT_USE_SSL
-                ),
-            }
-
-            if not data[CONF_HYDROLIX_HOST]:
-                errors[CONF_HYDROLIX_HOST] = "invalid_host"
-            if not data[CONF_HYDROLIX_TOKEN]:
+            token = user_input[CONF_HYDROLIX_TOKEN].strip()
+            if not token:
                 errors[CONF_HYDROLIX_TOKEN] = "invalid_token"
-            if not _NAME_RE.match(data[CONF_HYDROLIX_PROJECT]):
-                errors[CONF_HYDROLIX_PROJECT] = "invalid_name"
-            if not _NAME_RE.match(data[CONF_HYDROLIX_TABLE]):
-                errors[CONF_HYDROLIX_TABLE] = "invalid_name"
 
-            if not errors:
+            target = None
+            try:
+                target = parse_ingest_url(user_input[CONF_INGEST_URL])
+            except IngestUrlError as err:
+                errors[CONF_INGEST_URL] = err.code
+
+            if target is not None and not errors:
+                # Stored as separate keys, as in earlier versions. The
+                # transform is not part of the unique id: one entry per table.
+                data: dict[str, Any] = {
+                    CONF_HYDROLIX_HOST: target.host,
+                    CONF_HYDROLIX_TOKEN: token,
+                    CONF_HYDROLIX_PROJECT: target.database,
+                    CONF_HYDROLIX_TABLE: target.table,
+                    CONF_HYDROLIX_USE_SSL: target.use_ssl,
+                }
+                if target.transform:
+                    data[CONF_HYDROLIX_TRANSFORM] = target.transform
+
                 await self.async_set_unique_id(
-                    f"{data[CONF_HYDROLIX_HOST]}"
-                    f"_{data[CONF_HYDROLIX_PROJECT]}"
-                    f"_{data[CONF_HYDROLIX_TABLE]}"
+                    f"{target.host}_{target.database}_{target.table}"
                 )
                 self._abort_if_unique_id_configured()
 
                 # Reachability only: a token cannot be verified without
                 # writing an event, so auth errors show on the first flush.
                 client = HydrolixClient(
-                    host=data[CONF_HYDROLIX_HOST],
-                    database=data[CONF_HYDROLIX_PROJECT],
-                    table=data[CONF_HYDROLIX_TABLE],
-                    token=data[CONF_HYDROLIX_TOKEN],
-                    use_ssl=data[CONF_HYDROLIX_USE_SSL],
+                    host=target.host,
+                    database=target.database,
+                    table=target.table,
+                    token=token,
+                    use_ssl=target.use_ssl,
+                    transform=target.transform,
                 )
                 try:
                     reachable = await client.async_connect()
@@ -138,10 +136,7 @@ class HydrolixHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await client.async_stop()
 
                 if reachable:
-                    title = (
-                        f"Hydrolix ({data[CONF_HYDROLIX_PROJECT]}"
-                        f".{data[CONF_HYDROLIX_TABLE]})"
-                    )
+                    title = f"Hydrolix ({target.database}.{target.table})"
                     return self.async_create_entry(title=title, data=data)
                 errors["base"] = "cannot_connect"
 
@@ -151,6 +146,7 @@ class HydrolixHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 STEP_USER_SCHEMA, user_input or {}
             ),
             errors=errors,
+            description_placeholders={"example_url": _EXAMPLE_URL},
         )
 
     @staticmethod
