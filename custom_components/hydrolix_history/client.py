@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -35,6 +36,38 @@ class HydrolixStats:
     connected: bool = False
 
 
+# Attributes sent as their own top-level field, so not repeated in ``attributes``.
+_PROMOTED_ATTRIBUTES = ("friendly_name", "device_class", "unit_of_measurement", "icon")
+
+
+def format_timestamp(value: datetime) -> str:
+    """Format a datetime as UTC with a constant shape.
+
+    Always ``YYYY-MM-DDTHH:MM:SS.ffffffZ``. ``datetime.isoformat()`` drops
+    the fraction when microseconds are zero, which makes the format vary
+    between events.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert a value into something that serialises as strict JSON."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        # NaN / Infinity are not valid JSON.
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, datetime):
+        return format_timestamp(value)
+    return str(value)
+
+
 @dataclass
 class StateEvent:
     """Represents a Home Assistant state change event for Hydrolix ingestion."""
@@ -44,43 +77,50 @@ class StateEvent:
     state: str
     old_state: str | None
     attributes: dict[str, Any]
-    last_changed: str
-    last_updated: str
-    timestamp: str  # ISO 8601
+    last_changed: str  # see format_timestamp
+    timestamp: str  # event time (HA last_updated), see format_timestamp
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to a dict suitable for Hydrolix JSON ingest."""
-        # Flatten attributes to top-level fields with attr_ prefix
-        record = {
+        """Convert to a dict suitable for Hydrolix JSON ingest.
+
+        The record is shaped so the schema can be inferred without
+        conflicts: every field keeps one type, a field with no value is
+        left out rather than sent empty, and ``attributes`` is a JSON
+        string because its keys change type between entities.
+        """
+        record: dict[str, Any] = {
             "timestamp": self.timestamp,
+            "last_changed": self.last_changed,
             "entity_id": self.entity_id,
             "domain": self.domain,
             "state": self.state,
-            "old_state": self.old_state or "",
-            "last_changed": self.last_changed,
-            "last_updated": self.last_updated,
-            "friendly_name": self.attributes.get("friendly_name", ""),
-            "device_class": self.attributes.get("device_class", ""),
-            "unit_of_measurement": self.attributes.get("unit_of_measurement", ""),
-            "icon": self.attributes.get("icon", ""),
         }
 
-        # Try to parse numeric state value
-        try:
-            record["state_float"] = float(self.state)
-        except (ValueError, TypeError):
-            record["state_float"] = None
+        if self.old_state:
+            record["old_state"] = self.old_state
 
-        # Store full attributes as native JSON (Hydrolix json datatype)
+        # Numeric parse of the state; non-numeric and non-finite are left out
         try:
-            # Filter out non-serialisable values; json datatype accepts dicts directly
-            record["attributes"] = {
-                k: v
-                for k, v in self.attributes.items()
-                if isinstance(v, (str, int, float, bool, list, dict, type(None)))
-            }
-        except (TypeError, ValueError):
-            record["attributes"] = {}
+            state_float = float(self.state)
+        except (ValueError, TypeError):
+            state_float = None
+        if state_float is not None and math.isfinite(state_float):
+            record["state_float"] = state_float
+
+        for key in _PROMOTED_ATTRIBUTES:
+            value = self.attributes.get(key)
+            if value is not None and value != "":
+                record[key] = str(value)
+
+        remaining = {
+            str(k): _json_safe(v)
+            for k, v in self.attributes.items()
+            if k not in _PROMOTED_ATTRIBUTES
+        }
+        if remaining:
+            record["attributes"] = json.dumps(
+                remaining, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            )
 
         return record
 
@@ -97,7 +137,6 @@ class HydrolixClient:
         use_ssl: bool = True,
         batch_size: int = 100,
         batch_interval: float = 5.0,
-        transform_name: str = "",
     ) -> None:
         """Initialize the Hydrolix client."""
         self._host = host
@@ -107,7 +146,6 @@ class HydrolixClient:
         self._use_ssl = use_ssl
         self._batch_size = batch_size
         self._batch_interval = batch_interval
-        self._transform_name = transform_name
 
         self._queue: deque[StateEvent] = deque(maxlen=10000)
         self._session: aiohttp.ClientSession | None = None
@@ -122,26 +160,32 @@ class HydrolixClient:
     def ingest_url(self) -> str:
         """Build the Hydrolix ingest URL.
 
-        Format: https://$cluster/ingest/event?table=project.table&transform=name
+        Format: https://$cluster/ingest/event?table=project.table
+
+        No transform is named: with Schema Intelligence (Autopilot) the
+        table's transform accepts every event by default, and fields are
+        promoted once enough data has built confidence in them. The
+        project and table must already exist.
         """
-        url = f"{self._base_url}/ingest/event?table={self._database}.{self._table}"
-        if self._transform_name:
-            url += f"&transform={self._transform_name}"
-        return url
+        return f"{self._base_url}/ingest/event?table={self._database}.{self._table}"
 
     async def async_connect(self) -> bool:
-        """Test connectivity to Hydrolix and start the flush loop."""
+        """Check that the Hydrolix cluster is reachable.
+
+        Only reachability is tested. An ingest token cannot be verified
+        without writing an event, so token or permission problems surface
+        on the first flush (see ``stats.last_error``).
+        """
         try:
             if self._session is None or self._session.closed:
                 timeout = aiohttp.ClientTimeout(total=30)
                 self._session = aiohttp.ClientSession(timeout=timeout)
 
-            # Test connectivity with a simple request
-            headers = self._get_headers()
+            # No credentials are sent: this only proves the host answers.
             async with self._session.get(
-                f"{self._base_url}/config/v1/",
-                headers=headers,
+                f"{self._base_url}/",
                 ssl=self._use_ssl,
+                allow_redirects=False,
             ) as response:
                 # Any response (even 401/404) means the server is reachable
                 self.stats.connected = True
