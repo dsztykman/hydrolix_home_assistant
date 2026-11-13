@@ -16,6 +16,13 @@ jobs:
         with:
           category: integration
 
+  hassfest:
+    runs-on: ubuntu-latest
+    name: Validate with hassfest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
   lint:
     runs-on: ubuntu-latest
     name: Lint

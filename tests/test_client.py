@@ -5,6 +5,7 @@ import sys
 import os
 import gzip
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "custom_components", "hydrolix_history"))
 from client import (
     StateEvent,
+    format_timestamp,
     HydrolixClient,
     _MAX_RETRIES,
     _INITIAL_BACKOFF,
@@ -35,9 +37,8 @@ class TestStateEvent:
                 "device_class": "temperature",
                 "unit_of_measurement": "°C",
             },
-            last_changed="2024-01-15T10:30:00+00:00",
-            last_updated="2024-01-15T10:30:00+00:00",
-            timestamp="2024-01-15T10:30:00+00:00",
+            last_changed="2024-01-15T10:30:00.000000Z",
+            timestamp="2024-01-15T10:30:00.000000Z",
         )
 
         record = event.to_dict()
@@ -50,45 +51,43 @@ class TestStateEvent:
         assert record["friendly_name"] == "Living Room Temperature"
         assert record["device_class"] == "temperature"
         assert record["unit_of_measurement"] == "°C"
-        assert record["timestamp"] == "2024-01-15T10:30:00+00:00"
+        assert record["timestamp"] == "2024-01-15T10:30:00.000000Z"
 
     def test_non_numeric_state(self):
-        """Non-numeric states should have state_float as None."""
+        """Non-numeric states should leave state_float out."""
         event = StateEvent(
             entity_id="light.living_room",
             domain="light",
             state="on",
             old_state="off",
             attributes={"friendly_name": "Living Room Light"},
-            last_changed="2024-01-15T10:30:00+00:00",
-            last_updated="2024-01-15T10:30:00+00:00",
-            timestamp="2024-01-15T10:30:00+00:00",
+            last_changed="2024-01-15T10:30:00.000000Z",
+            timestamp="2024-01-15T10:30:00.000000Z",
         )
 
         record = event.to_dict()
 
         assert record["state"] == "on"
         assert record["old_state"] == "off"
-        assert record["state_float"] is None
+        assert "state_float" not in record
 
     def test_none_old_state(self):
-        """Missing old_state should serialize as empty string."""
+        """Missing old_state should be left out, not sent empty."""
         event = StateEvent(
             entity_id="sensor.new_sensor",
             domain="sensor",
             state="42",
             old_state=None,
             attributes={},
-            last_changed="2024-01-15T10:30:00+00:00",
-            last_updated="2024-01-15T10:30:00+00:00",
-            timestamp="2024-01-15T10:30:00+00:00",
+            last_changed="2024-01-15T10:30:00.000000Z",
+            timestamp="2024-01-15T10:30:00.000000Z",
         )
 
         record = event.to_dict()
-        assert record["old_state"] == ""
+        assert "old_state" not in record
 
-    def test_attributes_native_dict(self):
-        """Full attributes should be stored as a native dict (json datatype)."""
+    def test_attributes_json_string(self):
+        """Attributes are sent as one JSON string, minus promoted keys."""
         attrs = {
             "friendly_name": "Test Sensor",
             "unit_of_measurement": "W",
@@ -96,41 +95,105 @@ class TestStateEvent:
             "state_class": "measurement",
             "custom_key": [1, 2, 3],
         }
-        event = StateEvent(
-            entity_id="sensor.power",
-            domain="sensor",
-            state="150",
-            old_state="148",
-            attributes=attrs,
-            last_changed="2024-01-15T10:30:00+00:00",
-            last_updated="2024-01-15T10:30:00+00:00",
-            timestamp="2024-01-15T10:30:00+00:00",
-        )
+        event = _event(state="150", attributes=attrs)
 
         record = event.to_dict()
-        assert isinstance(record["attributes"], dict)
-        assert record["attributes"]["custom_key"] == [1, 2, 3]
-        assert record["attributes"]["state_class"] == "measurement"
+        assert isinstance(record["attributes"], str)
+        assert json.loads(record["attributes"]) == {
+            "state_class": "measurement",
+            "custom_key": [1, 2, 3],
+        }
+        # Promoted keys stay top-level only
+        assert record["friendly_name"] == "Test Sensor"
+        assert record["device_class"] == "power"
+        assert record["unit_of_measurement"] == "W"
 
-    def test_missing_attributes_fallback(self):
-        """Missing attribute keys should default to empty string."""
-        event = StateEvent(
-            entity_id="sensor.minimal",
-            domain="sensor",
-            state="1",
-            old_state=None,
-            attributes={},
-            last_changed="2024-01-15T10:30:00+00:00",
-            last_updated="2024-01-15T10:30:00+00:00",
-            timestamp="2024-01-15T10:30:00+00:00",
+    def test_missing_values_are_omitted(self):
+        """A field with no value is left out rather than sent empty."""
+        record = _event(state="on", attributes={"icon": "", "device_class": None}).to_dict()
+        assert set(record) == {
+            "timestamp",
+            "last_changed",
+            "entity_id",
+            "domain",
+            "state",
+        }
+
+    def test_no_last_updated_field(self):
+        """timestamp is the event time; last_updated is not duplicated."""
+        assert "last_updated" not in _event().to_dict()
+
+    @pytest.mark.parametrize("state", ["nan", "NaN", "inf", "-inf", "Infinity"])
+    def test_non_finite_state_is_not_numeric(self, state):
+        """nan / inf must not reach the payload: they are not valid JSON."""
+        record = _event(state=state).to_dict()
+        assert "state_float" not in record
+        json.dumps(record, allow_nan=False)
+
+    def test_attributes_are_strict_json(self):
+        """Non-finite floats and non-JSON types inside attributes are made safe."""
+        attrs = {
+            "bad": float("nan"),
+            "nested": {"worse": float("inf"), "ok": 1.5},
+            "rgb_color": (255, 180, 107),
+            "when": datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc),
+            "obj": object,
+        }
+        record = _event(attributes=attrs).to_dict()
+        json.dumps(record, allow_nan=False)
+        parsed = json.loads(record["attributes"])
+        assert parsed["bad"] is None
+        assert parsed["nested"] == {"worse": None, "ok": 1.5}
+        assert parsed["rgb_color"] == [255, 180, 107]
+        assert parsed["when"] == "2024-01-15T10:30:00.000000Z"
+        assert isinstance(parsed["obj"], str)
+
+    def test_field_types_are_stable(self):
+        """Every field keeps one JSON type whatever the entity."""
+        records = [
+            _event(state="21.5", attributes={"temperature": 21}).to_dict(),
+            _event(state="21", attributes={"temperature": 19.5}).to_dict(),
+            _event(state="heat", attributes={"temperature": "n/a"}).to_dict(),
+        ]
+        types: dict[str, set[type]] = {}
+        for record in records:
+            for key, value in record.items():
+                types.setdefault(key, set()).add(type(value))
+        assert all(len(t) == 1 for t in types.values()), types
+
+
+class TestFormatTimestamp:
+    """Timestamps must have one constant shape."""
+
+    def test_zero_microseconds_keeps_fraction(self):
+        dt = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        assert format_timestamp(dt) == "2024-01-15T10:30:00.000000Z"
+
+    def test_microseconds(self):
+        dt = datetime(2024, 1, 15, 10, 30, 0, 481216, tzinfo=timezone.utc)
+        assert format_timestamp(dt) == "2024-01-15T10:30:00.481216Z"
+
+    def test_other_timezone_converted_to_utc(self):
+        tz = timezone(timedelta(hours=2))
+        dt = datetime(2024, 1, 15, 12, 30, 0, tzinfo=tz)
+        assert format_timestamp(dt) == "2024-01-15T10:30:00.000000Z"
+
+    def test_naive_treated_as_utc(self):
+        assert format_timestamp(datetime(2024, 1, 15, 10, 30)) == (
+            "2024-01-15T10:30:00.000000Z"
         )
 
-        record = event.to_dict()
-        assert record["friendly_name"] == ""
-        assert record["device_class"] == ""
-        assert record["unit_of_measurement"] == ""
-        assert record["icon"] == ""
-        assert record["attributes"] == {}
+
+def _event(state="42", old_state=None, attributes=None) -> StateEvent:
+    return StateEvent(
+        entity_id="sensor.test",
+        domain="sensor",
+        state=state,
+        old_state=old_state,
+        attributes=attributes or {},
+        last_changed="2024-01-15T10:30:00.000000Z",
+        timestamp="2024-01-15T10:30:00.000000Z",
+    )
 
 
 class TestGzipCompression:
@@ -172,34 +235,28 @@ class TestIngestUrl:
     """Test that the ingest URL is correctly formed."""
 
     def test_url_format(self):
-        """URL should be https://host/ingest/event?table=project.table&transform=name."""
+        """URL should be https://host/ingest/event?table=project.table."""
         client = HydrolixClient(
             host="my-cluster.hydrolix.live",
             database="homeassistant",
             table="state_history",
             token="fake",
-            transform_name="ha_state_history",
         )
         expected = (
             "https://my-cluster.hydrolix.live/ingest/event"
             "?table=homeassistant.state_history"
-            "&transform=ha_state_history"
         )
         assert client.ingest_url == expected
 
-    def test_url_no_transform(self):
-        """URL without transform should omit the &transform= param."""
+    def test_url_never_names_a_transform(self):
+        """Autopilot infers the schema, so no transform is ever requested."""
         client = HydrolixClient(
             host="my-cluster.hydrolix.live",
             database="homeassistant",
             table="state_history",
             token="fake",
         )
-        expected = (
-            "https://my-cluster.hydrolix.live/ingest/event"
-            "?table=homeassistant.state_history"
-        )
-        assert client.ingest_url == expected
+        assert "transform" not in client.ingest_url
 
     def test_url_no_port(self):
         """URL should never contain a port number."""
@@ -247,9 +304,8 @@ def _make_event() -> StateEvent:
         state="42",
         old_state="41",
         attributes={"friendly_name": "Test"},
-        last_changed="2024-01-15T10:30:00+00:00",
-        last_updated="2024-01-15T10:30:00+00:00",
-        timestamp="2024-01-15T10:30:00+00:00",
+        last_changed="2024-01-15T10:30:00.000000Z",
+        timestamp="2024-01-15T10:30:00.000000Z",
     )
 
 

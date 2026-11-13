@@ -76,7 +76,6 @@ class HydrolixBaseSensor(SensorEntity):
     async def async_update(self) -> None:
         """Update sensor state from client stats."""
         # Subclasses implement specific update logic
-        pass
 
 
 class HydrolixEventsSentSensor(HydrolixBaseSensor):
@@ -138,7 +137,7 @@ class HydrolixConnectionStatusSensor(HydrolixBaseSensor):
 
     _attr_icon = "mdi:connection"
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["connected", "disconnected"]
+    _attr_options = ["connected", "disconnected"]  # noqa: RUF012
 
     def __init__(
         self, client: HydrolixClient, entry: ConfigEntry, device_info: DeviceInfo

@@ -33,10 +33,12 @@ State Change Event
 
 ## Installation
 
-### HACS (Recommended)
+### Marketplace / HACS (Recommended)
 
-1. Open HACS in your Home Assistant UI.
-2. Go to **Integrations** → click the **⋮** menu → **Custom repositories**.
+Home Assistant 2026.11 and later ship HACS as the built-in **Marketplace**. Hydrolix History is not in the default catalogue, so add it as a custom repository:
+
+1. Open **Settings** → **Marketplace** (or HACS on older versions).
+2. Open **Custom repositories**.
 3. Add `https://github.com/dsztykman/hydrolix_home_assistant` as an **Integration**.
 4. Search for **Hydrolix History** and install it.
 5. Restart Home Assistant.
@@ -48,78 +50,87 @@ State Change Event
 
 ## Configuration
 
-### Add the Integration (auto-provisions everything)
+### Before you start
+
+In the Hydrolix console:
+
+1. Create the project and table you want to stream into (**Data pipelines**). They must exist before any data is sent.
+2. Create an **ingest token** for that table. This is a service-account token with ingest permission. It is shown once, so copy it.
+
+The integration does not create projects, tables or transforms. It only sends events. With **Schema Intelligence** (formerly Autopilot), the table already has a transform that accepts every event by default. It then waits until it has seen enough data to be confident about a field before promoting it, and updates the transform automatically.
+
+This means fields do not all appear straight away. A field that is rare in your data takes longer to be promoted than one present in every event.
+
+If a field has conflicting values (for example, a number in some events and text in others), Schema Intelligence does not guess. It asks for a human review in the Hydrolix console.
+
+### Add the Integration
 
 1. Go to **Settings** → **Devices & Services** → **Add Integration**.
 2. Search for **Hydrolix History**.
-
-The setup wizard walks you through three steps:
-
-#### Step 1 — Connect
+3. Fill in the single setup form:
 
 | Field | Description |
 |---|---|
-| **Host** | Your Hydrolix cluster hostname (e.g., `my-cluster.hydrolix.live`) |
-| **API / Bearer Token** | Token with **config + ingest** permissions |
-| **Use SSL** | Enable for production clusters (default `true`) |
+| **Hydrolix Hostname** | Your cluster hostname (e.g., `my-cluster.hydrolix.live`) |
+| **Ingest Token** | Service-account token with ingest permission |
+| **Project** | Project to stream into (default `homeassistant`). This is the database name in SQL queries |
+| **Table** | Table to stream into (default `state_history`) |
+| **Use SSL/TLS** | Enable for production clusters (default `true`) |
 
-The integration calls `GET /config/v1/orgs/` to verify the token and discover your org UUID.
+Setup only checks that the cluster is reachable. A wrong or expired token shows up in `sensor.hydrolix_history_last_error` after the first flush.
 
-#### Step 2 — Project
+### What is sent
 
-Choose **Use existing project** and pick from the dropdown, **or** choose **Create new project** and type a name. The project name becomes the database name in SQL queries (e.g., `SELECT ... FROM homeassistant.state_history`).
+Events are posted as gzip-compressed NDJSON:
 
-#### Step 3 — Table
+```
+POST https://$cluster/ingest/event?table=project.table
+Authorization: Bearer <ingest token>
+Content-Type: application/json
+Content-Encoding: gzip
+```
 
-Choose **Use existing table** or **Create new table**. When a table is created (or selected), the integration **automatically provisions the write transform** (`ha_state_history`) with the full Home Assistant schema — no manual API calls or JSON files needed.
+No transform is named in the request. Each event carries these fields:
 
-The auto-created transform includes:
-
-| Column | Type | Indexed | Description |
+| Field | Type | Always present | Description |
 |---|---|---|---|
-| `timestamp` | `datetime` (primary) | ✅ | When the state change occurred (Go fmt: `2006-01-02T15:04:05…`) |
-| `entity_id` | `string` | ✅ | e.g., `sensor.living_room_temperature` |
-| `domain` | `string` | ✅ | e.g., `sensor`, `light`, `climate` |
-| `state` | `string` | ✅ | The new state value |
-| `old_state` | `string` | ✅ | The previous state value |
-| `state_float` | `double` | | Numeric parse of `state` (0 if non-numeric) |
-| `last_changed` | `datetime` | ✅ | HA last_changed timestamp |
-| `last_updated` | `datetime` | ✅ | HA last_updated timestamp |
-| `friendly_name` | `string` | ✅ | Human-readable entity name |
-| `device_class` | `string` | ✅ | e.g., `temperature`, `humidity` |
-| `unit_of_measurement` | `string` | ✅ | e.g., `°C`, `%`, `W` |
-| `icon` | `string` | ✅ | MDI icon name |
-| `attributes` | `json` | | Full entity attributes as native JSON |
+| `timestamp` | datetime | Yes | Event time (HA `last_updated`) |
+| `last_changed` | datetime | Yes | When the state value itself last changed |
+| `entity_id` | string | Yes | e.g., `sensor.living_room_temperature` |
+| `domain` | string | Yes | e.g., `sensor`, `light`, `climate` |
+| `state` | string | Yes | The new state value, always as a string |
+| `old_state` | string | No | The previous state value |
+| `state_float` | number | No | Numeric parse of `state`, only when it is a finite number |
+| `friendly_name` | string | No | Human-readable entity name |
+| `device_class` | string | No | e.g., `temperature`, `humidity` |
+| `unit_of_measurement` | string | No | e.g., `°C`, `%`, `W` |
+| `icon` | string | No | MDI icon name |
+| `attributes` | string (JSON) | No | All other entity attributes, as a JSON string |
 
-The transform is marked as the **default** transform for the table, so no `x-hdx-transform` header is needed at ingest time.
+Example event:
 
-### Provisioning Flow (what happens behind the scenes)
-
+```json
+{"timestamp": "2026-11-13T12:45:03.481216Z", "last_changed": "2026-11-13T12:44:10.002113Z", "entity_id": "climate.hallway", "domain": "climate", "state": "heat", "old_state": "unavailable", "friendly_name": "Hallway", "attributes": "{\"hvac_modes\":[\"off\",\"heat\"],\"current_temperature\":19.5,\"temperature\":21,\"hvac_action\":\"heating\"}"}
 ```
-Config Flow                        Hydrolix Config API
-─────────────────                  ───────────────────
-Step 1: host/token/ssl  ────────▶  GET  /config/v1/orgs/
-                                   (verify token, get org_uuid)
-                        ◀────────  org_uuid
 
-Step 2: project         ────────▶  GET  /config/v1/orgs/{org}/projects/
-                                   (list existing projects)
-  [create new]          ────────▶  POST /config/v1/orgs/{org}/projects/
-                        ◀────────  project_uuid
+The payload is shaped so Schema Intelligence can infer it without conflicts:
 
-Step 3: table           ────────▶  GET  .../projects/{proj}/tables/
-                                   (list existing tables)
-  [create new]          ────────▶  POST .../projects/{proj}/tables/
-                        ◀────────  table_uuid
+- **One type per field.** `state` is always a string; `state_float` is always a number.
+- **No empty placeholders.** A field with no value is left out, not sent as `""` or `null`.
+- **One timestamp format.** Always UTC, `YYYY-MM-DDTHH:MM:SS.ffffffZ`.
+- **`attributes` is a JSON string.** Attribute keys change type between entities (a `temperature` can be `21`, `19.5` or missing), which would cause field conflicts if sent as an object. Query it with JSON functions, for example `JSONExtractFloat(attributes, 'current_temperature')`.
 
-  [auto-transform]      ────────▶  GET  .../tables/{tbl}/transforms/
-                                   (check if ha_state_history exists)
-  [create if missing]   ────────▶  POST .../tables/{tbl}/transforms/
-                                   (full schema + settings)
-                        ◀────────  transform_uuid
+### Upgrading from 0.1.x
 
-Done → streaming begins via POST https://$cluster/ingest/event?table=project.table&transform=ha_state_history
-```
+Earlier versions created the project, table and an `ha_state_history` transform through the Config API, and named that transform on every request. That transform was created as the table's default, so the cluster still applies it when no transform is named.
+
+The payload has also changed, which affects tables that still use the old fixed transform:
+
+- `last_updated` is no longer sent. `timestamp` now carries that value.
+- `attributes` is now a JSON string, where the old transform declared a `json` column.
+- Empty strings and `null` values are no longer sent.
+
+Stream into a new table if you want Schema Intelligence to manage the schema from the start.
 
 ### Configure Filtering (Optional)
 
@@ -193,36 +204,20 @@ GROUP BY day
 ORDER BY day;
 ```
 
-## YAML Configuration (Advanced)
-
-For users who prefer YAML over the UI config flow — note that the UI wizard handles project/table/transform creation automatically. YAML is intended for setups where resources were already provisioned externally.
-
-```yaml
-hydrolix_history:
-  hydrolix_host: my-cluster.hydrolix.live
-  hydrolix_token: !secret hydrolix_token
-  hydrolix_project: homeassistant
-  hydrolix_table: state_history
-  hydrolix_use_ssl: true
-  batch_size: 100
-  batch_interval: 5
-  exclude_domains:
-    - automation
-    - script
-    - persistent_notification
-  exclude_entities:
-    - sensor.date
-    - sensor.time
-```
-
 ## Troubleshooting
 
 ### Events not arriving in Hydrolix
 
 1. Check the `sensor.hydrolix_history_connection_status` sensor.
 2. Look at `sensor.hydrolix_history_last_error` for details.
-3. Verify the table exists in your Hydrolix cluster.
-4. Ensure your bearer token has ingest permissions.
+3. Check that the ingest token is valid, not expired, and has ingest permission on the project or table.
+4. Check in the Hydrolix console that the table exists.
+
+### A field is missing from the table
+
+Schema Intelligence promotes a field only once it has seen enough data to be confident about it. Events are accepted from the first request, so wait for more data to arrive and check the field's status in the Hydrolix console.
+
+If the field is waiting for review, it has conflicting values across events. Resolve the review in the console. The integration keeps one type per field to avoid this, so a review request usually means other data is being sent to the same table.
 
 ### High queue depth
 
