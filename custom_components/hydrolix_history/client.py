@@ -12,6 +12,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, quote, urlsplit
 
 import aiohttp
 
@@ -34,6 +35,80 @@ class HydrolixStats:
     last_error: str | None = None
     last_sent: datetime | None = None
     connected: bool = False
+
+
+# Project, table and transform names end up in the ingest URL and in SQL.
+_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_TRANSFORM_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+_INGEST_PATH = "/ingest/event"
+
+
+class IngestUrlError(ValueError):
+    """An ingest URL could not be used. ``code`` names the reason."""
+
+    def __init__(self, code: str) -> None:
+        """Store the reason code, which doubles as a translation key."""
+        super().__init__(code)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class IngestTarget:
+    """The parts of an ingest URL."""
+
+    host: str
+    use_ssl: bool
+    database: str
+    table: str
+    transform: str | None = None
+
+
+def parse_ingest_url(value: str) -> IngestTarget:
+    """Split ``https://host/ingest/event?table=project.table&transform=name``.
+
+    ``transform`` is optional. The scheme defaults to ``https``. Raises
+    ``IngestUrlError`` with one of ``invalid_url``, ``invalid_table`` or
+    ``invalid_transform``.
+    """
+    url = value.strip()
+    if "://" not in url:
+        url = f"https://{url}"
+    try:
+        parts = urlsplit(url)
+        query = parse_qs(parts.query, keep_blank_values=True, strict_parsing=False)
+        host = parts.netloc
+        parts.port  # noqa: B018 - raises ValueError on a malformed port
+    except ValueError as err:
+        raise IngestUrlError("invalid_url") from err
+
+    if (
+        parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or "@" in host
+        or parts.path.rstrip("/") != _INGEST_PATH
+        or parts.fragment
+        or set(query) - {"table", "transform"}
+        or any(len(values) != 1 for values in query.values())
+    ):
+        raise IngestUrlError("invalid_url")
+
+    database, _, table = query.get("table", [""])[0].partition(".")
+    if not _NAME_RE.fullmatch(database) or not _NAME_RE.fullmatch(table):
+        raise IngestUrlError("invalid_table")
+
+    transform = None
+    if "transform" in query:
+        transform = query["transform"][0]
+        if not _TRANSFORM_RE.fullmatch(transform):
+            raise IngestUrlError("invalid_transform")
+
+    return IngestTarget(
+        host=host.lower(),
+        use_ssl=parts.scheme == "https",
+        database=database,
+        table=table,
+        transform=transform,
+    )
 
 
 # Attributes sent as their own top-level field, so not repeated in ``attributes``.
@@ -186,6 +261,7 @@ class HydrolixClient:
         use_ssl: bool = True,
         batch_size: int = 100,
         batch_interval: float = 5.0,
+        transform: str | None = None,
     ) -> None:
         """Initialize the Hydrolix client."""
         self._host = host
@@ -193,6 +269,7 @@ class HydrolixClient:
         self._table = table
         self._token = token
         self._use_ssl = use_ssl
+        self._transform = transform or None
         self._batch_size = batch_size
         self._batch_interval = batch_interval
 
@@ -209,14 +286,17 @@ class HydrolixClient:
     def ingest_url(self) -> str:
         """Build the Hydrolix ingest URL.
 
-        Format: https://$cluster/ingest/event?table=project.table
+        Format: https://$cluster/ingest/event?table=project.table[&transform=name]
 
-        No transform is named: with Schema Intelligence (Autopilot) the
-        table's transform accepts every event by default, and fields are
+        Without a transform, the table's default applies: with Schema
+        Intelligence (Autopilot) it accepts every event, and fields are
         promoted once enough data has built confidence in them. The
         project and table must already exist.
         """
-        return f"{self._base_url}/ingest/event?table={self._database}.{self._table}"
+        url = f"{self._base_url}{_INGEST_PATH}?table={self._database}.{self._table}"
+        if self._transform:
+            url += f"&transform={quote(self._transform, safe='')}"
+        return url
 
     async def async_connect(self) -> bool:
         """Check that the Hydrolix cluster is reachable.

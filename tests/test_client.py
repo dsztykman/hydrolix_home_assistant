@@ -17,6 +17,8 @@ from client import (
     format_timestamp,
     parse_number,
     parse_time,
+    parse_ingest_url,
+    IngestUrlError,
     HydrolixClient,
     _MAX_RETRIES,
     _INITIAL_BACKOFF,
@@ -333,8 +335,8 @@ class TestIngestUrl:
         )
         assert client.ingest_url == expected
 
-    def test_url_never_names_a_transform(self):
-        """Autopilot infers the schema, so no transform is ever requested."""
+    def test_url_without_transform(self):
+        """No transform is named unless one was configured."""
         client = HydrolixClient(
             host="my-cluster.hydrolix.live",
             database="homeassistant",
@@ -342,6 +344,19 @@ class TestIngestUrl:
             token="fake",
         )
         assert "transform" not in client.ingest_url
+
+    def test_url_with_transform(self):
+        client = HydrolixClient(
+            host="my-cluster.hydrolix.live",
+            database="homeassistant",
+            table="state_history",
+            token="fake",
+            transform="my_transform",
+        )
+        assert client.ingest_url == (
+            "https://my-cluster.hydrolix.live/ingest/event"
+            "?table=homeassistant.state_history&transform=my_transform"
+        )
 
     def test_url_no_port(self):
         """URL should never contain a port number."""
@@ -365,6 +380,101 @@ class TestIngestUrl:
             use_ssl=False,
         )
         assert client.ingest_url.startswith("http://localhost/")
+
+
+class TestParseIngestUrl:
+    """Test splitting the ingest URL entered in the setup form."""
+
+    def test_table_only(self):
+        target = parse_ingest_url(
+            "https://my-cluster.hydrolix.live/ingest/event?table=ha.state_history"
+        )
+        assert target.host == "my-cluster.hydrolix.live"
+        assert target.use_ssl is True
+        assert target.database == "ha"
+        assert target.table == "state_history"
+        assert target.transform is None
+
+    def test_with_transform(self):
+        target = parse_ingest_url(
+            "https://c.hydrolix.live/ingest/event?table=ha.t&transform=my_transform"
+        )
+        assert target.transform == "my_transform"
+
+    def test_round_trip(self):
+        url = "https://c.hydrolix.live/ingest/event?table=ha.t&transform=tr-1.v2"
+        target = parse_ingest_url(url)
+        client = HydrolixClient(
+            host=target.host,
+            database=target.database,
+            table=target.table,
+            token="fake",
+            use_ssl=target.use_ssl,
+            transform=target.transform,
+        )
+        assert client.ingest_url == url
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "  https://c.hydrolix.live/ingest/event?table=ha.t  ",
+            "https://c.hydrolix.live/ingest/event/?table=ha.t",
+            "c.hydrolix.live/ingest/event?table=ha.t",
+            "HTTPS://C.Hydrolix.Live/ingest/event?table=ha.t",
+        ],
+    )
+    def test_tolerated_forms(self, url):
+        target = parse_ingest_url(url)
+        assert (target.host, target.use_ssl) == ("c.hydrolix.live", True)
+        assert (target.database, target.table) == ("ha", "t")
+
+    def test_http_and_port(self):
+        target = parse_ingest_url("http://localhost:8080/ingest/event?table=ha.t")
+        assert target.host == "localhost:8080"
+        assert target.use_ssl is False
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "",
+            "https://c.hydrolix.live",
+            "https://c.hydrolix.live/?table=ha.t",
+            "https://c.hydrolix.live/query?table=ha.t",
+            "ftp://c.hydrolix.live/ingest/event?table=ha.t",
+            "https:///ingest/event?table=ha.t",
+            "https://user:pw@c.hydrolix.live/ingest/event?table=ha.t",
+            "https://c.hydrolix.live:abc/ingest/event?table=ha.t",
+            "https://c.hydrolix.live/ingest/event?table=ha.t&token=secret",
+            "https://c.hydrolix.live/ingest/event?table=ha.t&table=ha.u",
+            "https://c.hydrolix.live/ingest/event?table=ha.t#frag",
+        ],
+    )
+    def test_invalid_url(self, url):
+        with pytest.raises(IngestUrlError) as err:
+            parse_ingest_url(url)
+        assert err.value.code == "invalid_url"
+
+    @pytest.mark.parametrize(
+        "table",
+        ["", "mytable", "ha.", ".t", "ha.t.x", "ha.my-table", "1ha.t", "ha.t;drop"],
+    )
+    def test_invalid_table(self, table):
+        url = f"https://c.hydrolix.live/ingest/event?table={table}"
+        with pytest.raises(IngestUrlError) as err:
+            parse_ingest_url(url)
+        assert err.value.code == "invalid_table"
+
+    def test_missing_table(self):
+        with pytest.raises(IngestUrlError) as err:
+            parse_ingest_url("https://c.hydrolix.live/ingest/event")
+        assert err.value.code == "invalid_table"
+
+    @pytest.mark.parametrize("transform", ["", "a b", "a/b", "-x"])
+    def test_invalid_transform(self, transform):
+        url = f"https://c.hydrolix.live/ingest/event?table=ha.t&transform={transform}"
+        with pytest.raises(IngestUrlError) as err:
+            parse_ingest_url(url)
+        assert err.value.code == "invalid_transform"
 
 
 def _make_client() -> HydrolixClient:

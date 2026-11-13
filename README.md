@@ -71,11 +71,18 @@ If a field has conflicting values (for example, a number in some events and text
 
 | Field | Description |
 |---|---|
-| **Hydrolix Hostname** | Your cluster hostname (e.g., `my-cluster.hydrolix.live`) |
+| **Ingest URL** | The ingest URL of your table (see below) |
 | **Ingest Token** | Service-account token with ingest permission |
-| **Project** | Project to stream into (default `homeassistant`). This is the database name in SQL queries |
-| **Table** | Table to stream into (default `state_history`) |
-| **Use SSL/TLS** | Enable for production clusters (default `true`) |
+
+The ingest URL names the cluster, the project and the table:
+
+```
+https://my-cluster.hydrolix.live/ingest/event?table=myproject.mytable
+```
+
+- `table` is required and must be `project.table`.
+- `transform` is optional. Add `&transform=mytransform` to use a specific transform. Without it, the table's default transform applies, which is the one managed by Schema Intelligence.
+- Use `http://` only for a development cluster without TLS.
 
 Setup only checks that the cluster is reachable. A wrong or expired token shows up in `sensor.hydrolix_history_last_error` after the first flush.
 
@@ -84,13 +91,13 @@ Setup only checks that the cluster is reachable. A wrong or expired token shows 
 Events are posted as gzip-compressed NDJSON:
 
 ```
-POST https://$cluster/ingest/event?table=project.table
+POST https://$cluster/ingest/event?table=project.table[&transform=name]
 Authorization: Bearer <ingest token>
 Content-Type: application/json
 Content-Encoding: gzip
 ```
 
-No transform is named in the request. Each event carries these fields:
+A transform is named only if the ingest URL you entered has one. Each event carries these fields:
 
 | Field | Type | Always present | Description |
 |---|---|---|---|
@@ -234,7 +241,7 @@ If `events_queued` keeps growing, your Hydrolix cluster may be slow to ingest. T
 
 ### SSL/TLS errors
 
-If you're connecting to a development cluster without valid TLS, set **Use SSL** to `false`.
+If you're connecting to a development cluster without valid TLS, use `http://` in the ingest URL.
 
 ## Contributing
 

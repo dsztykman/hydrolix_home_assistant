@@ -30,6 +30,7 @@ from .const import (
     CONF_HYDROLIX_PROJECT,
     CONF_HYDROLIX_TABLE,
     CONF_HYDROLIX_TOKEN,
+    CONF_HYDROLIX_TRANSFORM,
     CONF_HYDROLIX_USE_SSL,
     CONF_INCLUDE_DEVICE_CLASSES,
     CONF_INCLUDE_DOMAINS,
@@ -63,6 +64,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     table = config.get(CONF_HYDROLIX_TABLE, DEFAULT_TABLE)
     token = config[CONF_HYDROLIX_TOKEN]
     use_ssl = config.get(CONF_HYDROLIX_USE_SSL, DEFAULT_USE_SSL)
+    transform = config.get(CONF_HYDROLIX_TRANSFORM)
     batch_size = options.get(
         CONF_BATCH_SIZE, config.get(CONF_BATCH_SIZE, DEFAULT_BATCH_SIZE)
     )
@@ -107,6 +109,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         use_ssl=use_ssl,
         batch_size=batch_size,
         batch_interval=batch_interval,
+        transform=transform,
     )
 
     # Test connectivity
@@ -171,10 +174,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
     _LOGGER.info(
-        "Hydrolix History integration started — streaming to https://%s/ingest/event?table=%s.%s",
-        host,
-        database,
-        table,
+        "Hydrolix History integration started — streaming to %s",
+        client.ingest_url,
     )
 
     return True

@@ -10,6 +10,10 @@ CONF_HYDROLIX_USE_SSL = "hydrolix_use_ssl"
 # Configuration keys - ingest target
 CONF_HYDROLIX_PROJECT = "hydrolix_project"
 CONF_HYDROLIX_TABLE = "hydrolix_table"
+CONF_HYDROLIX_TRANSFORM = "hydrolix_transform"
+
+# Form-only key: the ingest URL is split into the keys above before storing
+CONF_INGEST_URL = "ingest_url"
 
 # Configuration keys - batching & filtering
 CONF_BATCH_SIZE = "batch_size"

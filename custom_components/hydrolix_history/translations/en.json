@@ -3,28 +3,23 @@
     "step": {
       "user": {
         "title": "Connect to Hydrolix",
-        "description": "Enter your Hydrolix cluster and an ingest token. Create the project and table in the Hydrolix console first. Schema Intelligence (Autopilot) accepts every event by default and promotes fields once it has seen enough data.",
+        "description": "Enter the ingest URL of your table and an ingest token. Create the project and table in the Hydrolix console first. The transform is optional: without one, Schema Intelligence (Autopilot) accepts every event by default and promotes fields once it has seen enough data.",
         "data": {
-          "hydrolix_host": "Hydrolix Hostname",
-          "hydrolix_token": "Ingest Token",
-          "hydrolix_project": "Project",
-          "hydrolix_table": "Table",
-          "hydrolix_use_ssl": "Use SSL/TLS"
+          "ingest_url": "Ingest URL",
+          "hydrolix_token": "Ingest Token"
         },
         "data_description": {
-          "hydrolix_host": "Hostname of your Hydrolix cluster (e.g., my-cluster.hydrolix.live)",
-          "hydrolix_token": "Service-account token with ingest permission on the project or table",
-          "hydrolix_project": "Project to stream into (the database name in SQL queries)",
-          "hydrolix_table": "Table to stream into (create it in the Hydrolix console first)",
-          "hydrolix_use_ssl": "Enable HTTPS for all connections"
+          "ingest_url": "https://my-cluster.hydrolix.live/ingest/event?table=project.table (add &transform=name to use a specific transform)",
+          "hydrolix_token": "Service-account token with ingest permission on the project or table"
         }
       }
     },
     "error": {
-      "cannot_connect": "Unable to reach the Hydrolix cluster. Check the hostname, the SSL setting, and that your IP is allowlisted.",
-      "invalid_host": "Enter the cluster hostname.",
+      "cannot_connect": "Unable to reach the Hydrolix cluster. Check the URL and that your IP is allowlisted.",
+      "invalid_url": "Enter the full ingest URL, for example https://my-cluster.hydrolix.live/ingest/event?table=project.table",
+      "invalid_table": "The URL needs table=project.table. Use letters, digits and underscores only.",
+      "invalid_transform": "The transform name in the URL is not valid.",
       "invalid_token": "Enter an ingest token.",
-      "invalid_name": "Use letters, digits and underscores only, starting with a letter or underscore.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
