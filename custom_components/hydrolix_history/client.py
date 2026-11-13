@@ -7,6 +7,7 @@ import gzip
 import json
 import logging
 import math
+import re
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -51,6 +52,58 @@ def format_timestamp(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+# Plain decimal or scientific notation only. ``float()`` alone would also
+# accept "nan", "inf", "1_000" and surrounding whitespace.
+_NUMBER_RE = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def parse_number(value: str | None) -> float | None:
+    """Return *value* as a finite float, or ``None`` if it is not a number."""
+    if not isinstance(value, str) or not _NUMBER_RE.fullmatch(value):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+# ISO 8601 date, optionally followed by a time. Anchored on the date so
+# bare times ("12:30") and compact forms ("20240115") are not matched.
+_DATETIME_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}.*)?")
+
+
+def parse_time(value: str | None) -> str | None:
+    """Return *value* as a formatted UTC timestamp, or ``None``.
+
+    Accepts ISO 8601 datetimes and plain dates (midnight UTC). A datetime
+    without an offset is taken as UTC.
+    """
+    if not isinstance(value, str) or not _DATETIME_RE.fullmatch(value):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return format_timestamp(parsed)
+
+
+def _put_state(record: dict[str, Any], key: str, value: str | None) -> None:
+    """Store a state in the one field that matches its type.
+
+    ``<key>_num`` for a number, ``<key>_time`` for a date or datetime,
+    ``<key>`` for everything else.
+    """
+    if value is None or value == "":
+        return
+    number = parse_number(value)
+    if number is not None:
+        record[f"{key}_num"] = number
+        return
+    time = parse_time(value)
+    if time is not None:
+        record[f"{key}_time"] = time
+        return
+    record[key] = value
+
+
 def _json_safe(value: Any) -> Any:
     """Convert a value into something that serialises as strict JSON."""
     if value is None or isinstance(value, (str, bool, int)):
@@ -83,28 +136,25 @@ class StateEvent:
         """Convert to a dict suitable for Hydrolix JSON ingest.
 
         The record is shaped so the schema can be inferred without
-        conflicts: every field keeps one type, a field with no value is
-        left out rather than sent empty, and ``attributes`` is a JSON
-        string because its keys change type between entities.
+        conflicts: every field keeps one type, numeric, time and text
+        states go to separate fields, a field with no value is left out rather
+        than sent empty, and ``attributes`` is a JSON string because its
+        keys change type between entities.
         """
         record: dict[str, Any] = {
             "timestamp": self.timestamp,
             "last_changed": self.last_changed,
             "entity_id": self.entity_id,
             "domain": self.domain,
-            "state": self.state,
         }
 
-        if self.old_state:
-            record["old_state"] = self.old_state
-
-        # Numeric parse of the state; non-numeric and non-finite are left out
-        try:
-            state_float = float(self.state)
-        except (ValueError, TypeError):
-            state_float = None
-        if state_float is not None and math.isfinite(state_float):
-            record["state_float"] = state_float
+        # A state goes to exactly one field: ``state_num`` when numeric,
+        # ``state_time`` when a date or datetime, ``state`` otherwise.
+        # ``state`` therefore never holds a value that looks like a number
+        # or a timestamp, so no field can be inferred with a conflicting
+        # type. Same split for the previous state.
+        _put_state(record, "state", self.state)
+        _put_state(record, "old_state", self.old_state)
 
         for key in _PROMOTED_ATTRIBUTES:
             value = self.attributes.get(key)

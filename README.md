@@ -98,24 +98,29 @@ No transform is named in the request. Each event carries these fields:
 | `last_changed` | datetime | Yes | When the state value itself last changed |
 | `entity_id` | string | Yes | e.g., `sensor.living_room_temperature` |
 | `domain` | string | Yes | e.g., `sensor`, `light`, `climate` |
-| `state` | string | Yes | The new state value, always as a string |
-| `old_state` | string | No | The previous state value |
-| `state_float` | number | No | Numeric parse of `state`, only when it is a finite number |
+| `state` | string | One of three | The new state, when it is text (`on`, `heat`, `unavailable`) |
+| `state_num` | number | One of three | The new state, when it is a number |
+| `state_time` | datetime | One of three | The new state, when it is a date or datetime |
+| `old_state` | string | No | The previous state, when it is text |
+| `old_state_num` | number | No | The previous state, when it is a number |
+| `old_state_time` | datetime | No | The previous state, when it is a date or datetime |
 | `friendly_name` | string | No | Human-readable entity name |
 | `device_class` | string | No | e.g., `temperature`, `humidity` |
 | `unit_of_measurement` | string | No | e.g., `°C`, `%`, `W` |
 | `icon` | string | No | MDI icon name |
 | `attributes` | string (JSON) | No | All other entity attributes, as a JSON string |
 
-Example event:
+Example events:
 
 ```json
+{"timestamp": "2026-11-13T12:45:03.481216Z", "last_changed": "2026-11-13T12:45:03.481216Z", "entity_id": "sensor.living_room_temperature", "domain": "sensor", "state_num": 21.5, "old_state_num": 21.3, "friendly_name": "Living Room Temperature", "device_class": "temperature", "unit_of_measurement": "°C", "attributes": "{\"state_class\":\"measurement\"}"}
 {"timestamp": "2026-11-13T12:45:03.481216Z", "last_changed": "2026-11-13T12:44:10.002113Z", "entity_id": "climate.hallway", "domain": "climate", "state": "heat", "old_state": "unavailable", "friendly_name": "Hallway", "attributes": "{\"hvac_modes\":[\"off\",\"heat\"],\"current_temperature\":19.5,\"temperature\":21,\"hvac_action\":\"heating\"}"}
+{"timestamp": "2026-11-13T12:45:03.481216Z", "last_changed": "2026-11-13T12:45:03.481216Z", "entity_id": "sensor.sun_next_dawn", "domain": "sensor", "state_time": "2026-11-14T06:31:10.000000Z", "old_state_time": "2026-11-13T06:29:48.000000Z", "friendly_name": "Sun Next dawn", "device_class": "timestamp"}
 ```
 
 The payload is shaped so Schema Intelligence can infer it without conflicts:
 
-- **One type per field.** `state` is always a string; `state_float` is always a number.
+- **One type per field.** Each state goes to exactly one of `state` (text), `state_num` (number) or `state_time` (date or datetime). `state` never holds a value that looks like a number or a timestamp. The previous state is split the same way.
 - **No empty placeholders.** A field with no value is left out, not sent as `""` or `null`.
 - **One timestamp format.** Always UTC, `YYYY-MM-DDTHH:MM:SS.ffffffZ`.
 - **`attributes` is a JSON string.** Attribute keys change type between entities (a `temperature` can be `21`, `19.5` or missing), which would cause field conflicts if sent as an object. Query it with JSON functions, for example `JSONExtractFloat(attributes, 'current_temperature')`.
@@ -129,6 +134,7 @@ The payload has also changed, which affects tables that still use the old fixed 
 - `last_updated` is no longer sent. `timestamp` now carries that value.
 - `attributes` is now a JSON string, where the old transform declared a `json` column.
 - Empty strings and `null` values are no longer sent.
+- `state` and `old_state` now hold text only. Numbers go to `state_num` / `old_state_num` (0.2.0 used `state_float`), and dates or datetimes go to `state_time` / `old_state_time`.
 
 Stream into a new table if you want Schema Intelligence to manage the schema from the start.
 
@@ -174,7 +180,7 @@ Once data is flowing, query it from any Hydrolix SQL-compatible client:
 -- Average temperature over the last 24 hours, per hour
 SELECT
   toStartOfHour(timestamp) AS hour,
-  avg(state_float) AS avg_temp
+  avg(state_num) AS avg_temp
 FROM homeassistant.state_history
 WHERE entity_id = 'sensor.living_room_temperature'
   AND timestamp > now() - INTERVAL 24 HOURS
@@ -196,7 +202,7 @@ LIMIT 20;
 -- Daily energy consumption trend
 SELECT
   toDate(timestamp) AS day,
-  max(state_float) - min(state_float) AS daily_kwh
+  max(state_num) - min(state_num) AS daily_kwh
 FROM homeassistant.state_history
 WHERE entity_id = 'sensor.energy_total'
   AND timestamp > now() - INTERVAL 30 DAYS
