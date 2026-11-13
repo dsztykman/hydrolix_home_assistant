@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "custom_compone
 from client import (
     StateEvent,
     format_timestamp,
+    parse_number,
+    parse_time,
     HydrolixClient,
     _MAX_RETRIES,
     _INITIAL_BACKOFF,
@@ -26,7 +28,7 @@ class TestStateEvent:
     """Test StateEvent serialization to Hydrolix format."""
 
     def test_basic_numeric_state(self):
-        """Numeric states should populate state_float."""
+        """Numeric states go to state_num / old_state_num only."""
         event = StateEvent(
             entity_id="sensor.temperature",
             domain="sensor",
@@ -45,16 +47,17 @@ class TestStateEvent:
 
         assert record["entity_id"] == "sensor.temperature"
         assert record["domain"] == "sensor"
-        assert record["state"] == "21.5"
-        assert record["old_state"] == "21.3"
-        assert record["state_float"] == 21.5
+        assert record["state_num"] == 21.5
+        assert record["old_state_num"] == 21.3
+        assert "state" not in record
+        assert "old_state" not in record
         assert record["friendly_name"] == "Living Room Temperature"
         assert record["device_class"] == "temperature"
         assert record["unit_of_measurement"] == "°C"
         assert record["timestamp"] == "2024-01-15T10:30:00.000000Z"
 
     def test_non_numeric_state(self):
-        """Non-numeric states should leave state_float out."""
+        """Text states go to state / old_state only."""
         event = StateEvent(
             entity_id="light.living_room",
             domain="light",
@@ -69,7 +72,8 @@ class TestStateEvent:
 
         assert record["state"] == "on"
         assert record["old_state"] == "off"
-        assert "state_float" not in record
+        assert "state_num" not in record
+        assert "old_state_num" not in record
 
     def test_none_old_state(self):
         """Missing old_state should be left out, not sent empty."""
@@ -84,7 +88,76 @@ class TestStateEvent:
         )
 
         record = event.to_dict()
+        assert not any(k.startswith("old_state") for k in record)
+
+    def test_mixed_transition(self):
+        """Each side of a transition is routed on its own value."""
+        record = _event(state="21.5", old_state="unavailable").to_dict()
+        assert record["state_num"] == 21.5
+        assert record["old_state"] == "unavailable"
+        assert "state" not in record
+        assert "old_state_num" not in record
+
+        record = _event(state="unknown", old_state="3").to_dict()
+        assert record["state"] == "unknown"
+        assert record["old_state_num"] == 3.0
+        assert "state_num" not in record
         assert "old_state" not in record
+
+    @pytest.mark.parametrize(
+        "state", ["0", "-3", "+4", "21.5", "5.", ".5", "1e3", "1.5E-2", "007"]
+    )
+    def test_numeric_forms(self, state):
+        record = _event(state=state).to_dict()
+        assert record["state_num"] == float(state)
+        assert isinstance(record["state_num"], float)
+        assert "state" not in record
+        assert "state_time" not in record
+
+    @pytest.mark.parametrize(
+        ("state", "expected"),
+        [
+            ("2026-11-14T06:31:10+00:00", "2026-11-14T06:31:10.000000Z"),
+            ("2026-11-14T08:31:10+02:00", "2026-11-14T06:31:10.000000Z"),
+            ("2026-11-14T06:31:10.123456Z", "2026-11-14T06:31:10.123456Z"),
+            ("2026-11-14T06:31:10", "2026-11-14T06:31:10.000000Z"),
+            ("2026-11-14 06:31:10", "2026-11-14T06:31:10.000000Z"),
+            ("2026-11-14", "2026-11-14T00:00:00.000000Z"),
+        ],
+    )
+    def test_time_forms(self, state, expected):
+        """Dates and datetimes go to state_time in the one timestamp format."""
+        record = _event(state=state, old_state=state).to_dict()
+        assert record["state_time"] == expected
+        assert record["old_state_time"] == expected
+        assert "state" not in record
+        assert "state_num" not in record
+        assert "old_state" not in record
+
+    @pytest.mark.parametrize(
+        "state",
+        [
+            "on",
+            "1_000",
+            " 5",
+            "5 ",
+            "1,5",
+            "2024.1.0",
+            "0x1F",
+            "12:30",
+            "12:30:00",
+            "-",
+            ".",
+            "2026-13-45",
+            "2026-11-14 is a date",
+            "20261114T063110",
+        ],
+    )
+    def test_text_forms(self, state):
+        record = _event(state=state).to_dict()
+        assert record["state"] == state
+        assert "state_num" not in record
+        assert "state_time" not in record
 
     def test_attributes_json_string(self):
         """Attributes are sent as one JSON string, minus promoted keys."""
@@ -126,8 +199,11 @@ class TestStateEvent:
     @pytest.mark.parametrize("state", ["nan", "NaN", "inf", "-inf", "Infinity"])
     def test_non_finite_state_is_not_numeric(self, state):
         """nan / inf must not reach the payload: they are not valid JSON."""
-        record = _event(state=state).to_dict()
-        assert "state_float" not in record
+        record = _event(state=state, old_state=state).to_dict()
+        assert "state_num" not in record
+        assert "old_state_num" not in record
+        assert record["state"] == state
+        assert record["old_state"] == state
         json.dumps(record, allow_nan=False)
 
     def test_attributes_are_strict_json(self):
@@ -151,10 +227,20 @@ class TestStateEvent:
     def test_field_types_are_stable(self):
         """Every field keeps one JSON type whatever the entity."""
         records = [
-            _event(state="21.5", attributes={"temperature": 21}).to_dict(),
-            _event(state="21", attributes={"temperature": 19.5}).to_dict(),
-            _event(state="heat", attributes={"temperature": "n/a"}).to_dict(),
+            _event(state="21.5", old_state="on", attributes={"temperature": 21}),
+            _event(state="21", old_state="20", attributes={"temperature": 19.5}),
+            _event(state="heat", old_state="7", attributes={"temperature": "n/a"}),
+            _event(state="unavailable", old_state="2026-11-14T06:31:10+00:00"),
+            _event(state="2026-11-14", old_state="off"),
         ]
+        records = [e.to_dict() for e in records]
+        # state / old_state never carry something that parses as a number
+        # or a timestamp
+        for record in records:
+            for key in ("state", "old_state"):
+                if key in record:
+                    assert parse_number(record[key]) is None
+                    assert parse_time(record[key]) is None
         types: dict[str, set[type]] = {}
         for record in records:
             for key, value in record.items():
@@ -208,9 +294,8 @@ class TestGzipCompression:
                 "timestamp": "2024-01-15T10:30:00.000000+00:00",
                 "entity_id": f"sensor.temperature_{i}",
                 "domain": "sensor",
-                "state": str(20.0 + i * 0.1),
-                "old_state": str(19.9 + i * 0.1),
-                "state_float": 20.0 + i * 0.1,
+                "state_num": 20.0 + i * 0.1,
+                "old_state_num": 19.9 + i * 0.1,
                 "friendly_name": f"Temperature Sensor {i}",
                 "device_class": "temperature",
                 "unit_of_measurement": "°C",
