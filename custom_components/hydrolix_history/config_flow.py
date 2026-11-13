@@ -58,6 +58,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+_EXAMPLE_URL = (
+    "https://my-cluster.hydrolix.live/ingest/event"
+    "?table=myproject.mytable&transform=mytransform"
+)
+
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_INGEST_URL): TextSelector(
@@ -141,6 +146,7 @@ class HydrolixHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 STEP_USER_SCHEMA, user_input or {}
             ),
             errors=errors,
+            description_placeholders={"example_url": _EXAMPLE_URL},
         )
 
     @staticmethod
