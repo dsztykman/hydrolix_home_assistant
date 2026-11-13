@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import logging
 import math
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
-
-import gzip
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,8 +47,8 @@ def format_timestamp(value: datetime) -> str:
     between events.
     """
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _json_safe(value: Any) -> Any:
@@ -201,7 +200,7 @@ class HydrolixClient:
             self.stats.last_error = str(err)
             _LOGGER.error("Failed to connect to Hydrolix: %s", err)
             return False
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             self.stats.connected = False
             self.stats.last_error = str(err)
             _LOGGER.error("Unexpected error connecting to Hydrolix: %s", err)
@@ -255,7 +254,7 @@ class HydrolixClient:
                 await self._flush()
             except asyncio.CancelledError:
                 break
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001
                 self.stats.last_error = str(err)
                 _LOGGER.error("Error in Hydrolix flush loop: %s", err)
 
@@ -301,7 +300,7 @@ class HydrolixClient:
                 ) as response:
                     if response.status in (200, 201, 204):
                         self.stats.events_sent += len(batch)
-                        self.stats.last_sent = datetime.now(timezone.utc)
+                        self.stats.last_sent = datetime.now(UTC)
                         self.stats.connected = True
                         self.stats.last_error = None
                         ratio = len(raw_bytes) / len(compressed) if compressed else 0
@@ -375,7 +374,7 @@ class HydrolixClient:
                 _LOGGER.error("Failed to send events to Hydrolix: %s", err)
                 return
 
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001
                 self.stats.last_error = str(err)
                 self.stats.events_dropped += len(batch)
                 _LOGGER.error("Unexpected error sending to Hydrolix: %s", err)

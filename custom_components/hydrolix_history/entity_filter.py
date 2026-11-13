@@ -91,8 +91,5 @@ class EntityFilter:
             return True
 
         # 9. If any include filter was set but we didn't match, exclude
-        if self._has_include:
-            return False
-
         # 10. Default: include
-        return True
+        return not self._has_include

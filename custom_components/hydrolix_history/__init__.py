@@ -12,7 +12,8 @@ historical data retention and analytics.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, State, callback
@@ -145,7 +146,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         old_state_str = old_state.state if old_state else None
 
         # Build the state event. Event time is HA's last_updated.
-        updated = new_state.last_updated or datetime.now(timezone.utc)
+        updated = new_state.last_updated or datetime.now(UTC)
         changed = new_state.last_changed or updated
         state_event = StateEvent(
             entity_id=entity_id,
