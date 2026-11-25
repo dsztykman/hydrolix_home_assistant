@@ -16,7 +16,7 @@ Home Assistant                          Hydrolix Cluster
 State Change Event
        │
        ▼
- Entity Filter ──── include/exclude by domain, entity, glob
+ Entity Filter ──── include/exclude by domain, entity, glob, device class
        │
        ▼
   Event Queue ───── batches events (configurable size/interval)
@@ -151,21 +151,25 @@ After setup, click **Configure** on the integration card to tune:
 
 - **Batch Size**: Events per flush (default 100)
 - **Batch Interval**: Seconds between flushes (default 5)
-- **Include/Exclude Domains**: e.g., `sensor, climate` or `automation, script`
+- **Include/Exclude Domains**: e.g., `sensor`, `climate`, or `automation`, `script`
 - **Include/Exclude Entities**: Specific entity IDs
+- **Include/Exclude Entity Globs**: Patterns such as `sensor.*_temperature` or `binary_sensor.door_*`. `*` matches any text.
+- **Include/Exclude Device Classes**: e.g., `temperature`, `humidity`, or `motion`, `battery`. An entity with no device class is skipped when an include list is set, and is left alone by an exclude list.
 
 #### Filtering Logic
 
-The filter follows the same precedence as InfluxDB and the recorder:
+The first match wins:
 
 1. Explicitly excluded entity → **exclude**
 2. Explicitly included entity → **include**
 3. Glob pattern exclusion → **exclude**
 4. Glob pattern inclusion → **include**
-5. Domain exclusion → **exclude**
-6. Domain inclusion → **include**
-7. If any include filter is set but no match → **exclude**
-8. Default → **include**
+5. Device class exclusion → **exclude**
+6. Device class inclusion → **include**
+7. Domain exclusion → **exclude**
+8. Domain inclusion → **include**
+9. If any include filter is set but no match → **exclude**
+10. Default → **include**
 
 ## Diagnostic Sensors
 

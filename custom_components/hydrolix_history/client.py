@@ -11,8 +11,11 @@ import re
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, quote, urlsplit
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 import aiohttp
 
@@ -249,6 +252,17 @@ class StateEvent:
         return record
 
 
+def _encode_batch(events: list[StateEvent]) -> tuple[bytes, bytes]:
+    """Build records, NDJSON, and gzip for one batch.
+
+    Called from the executor so a large flush does not block the
+    Home Assistant event loop.
+    """
+    ndjson = "\n".join(json.dumps(event.to_dict(), default=str) for event in events)
+    raw_bytes = ndjson.encode("utf-8")
+    return raw_bytes, gzip.compress(raw_bytes)
+
+
 class HydrolixClient:
     """Async client for pushing state data to Hydrolix."""
 
@@ -262,6 +276,7 @@ class HydrolixClient:
         batch_size: int = 100,
         batch_interval: float = 5.0,
         transform: str | None = None,
+        hass: HomeAssistant | None = None,
     ) -> None:
         """Initialize the Hydrolix client."""
         self._host = host
@@ -272,6 +287,7 @@ class HydrolixClient:
         self._transform = transform or None
         self._batch_size = batch_size
         self._batch_interval = batch_interval
+        self._hass = hass
 
         self._queue: deque[StateEvent] = deque(maxlen=10000)
         self._session: aiohttp.ClientSession | None = None
@@ -356,8 +372,10 @@ class HydrolixClient:
                 pass
             self._flush_task = None
 
-        # Flush remaining events
-        await self._flush()
+        # One attempt, then drop anything still queued. Retries here
+        # would block unloading the entry for minutes.
+        await self._flush(retry=False)
+        self._drop_queued()
 
         if self._session and not self._session.closed:
             await self._session.close()
@@ -388,8 +406,12 @@ class HydrolixClient:
                 self.stats.last_error = str(err)
                 _LOGGER.error("Error in Hydrolix flush loop: %s", err)
 
-    async def _flush(self) -> None:
-        """Send queued events to Hydrolix."""
+    async def _flush(self, *, retry: bool = True) -> None:
+        """Send queued events to Hydrolix.
+
+        ``retry`` is false for the flush from ``async_stop``: one
+        request, no backoff, and the caller drops whatever remains.
+        """
         if not self._queue:
             return
 
@@ -398,21 +420,18 @@ class HydrolixClient:
             if not self.stats.connected:
                 return
 
-        # Drain up to batch_size events
-        batch: list[dict[str, Any]] = []
-        while self._queue and len(batch) < self._batch_size:
-            event = self._queue.popleft()
-            batch.append(event.to_dict())
+        # Drain on the loop. The deque is only touched from this thread.
+        events: list[StateEvent] = []
+        while self._queue and len(events) < self._batch_size:
+            events.append(self._queue.popleft())
 
-        if not batch:
+        if not events:
             return
 
         self.stats.events_queued = len(self._queue)
 
-        # Build the compressed payload once for all retry attempts
-        ndjson_payload = "\n".join(json.dumps(record, default=str) for record in batch)
-        raw_bytes = ndjson_payload.encode("utf-8")
-        compressed = gzip.compress(raw_bytes)
+        # Serialize and compress off the loop, once for every retry.
+        raw_bytes, compressed = await self._async_encode_batch(events)
 
         backoff = _INITIAL_BACKOFF
 
@@ -429,7 +448,7 @@ class HydrolixClient:
                     ssl=self._use_ssl,
                 ) as response:
                     if response.status in (200, 201, 204):
-                        self.stats.events_sent += len(batch)
+                        self.stats.events_sent += len(events)
                         self.stats.last_sent = datetime.now(UTC)
                         self.stats.connected = True
                         self.stats.last_error = None
@@ -437,7 +456,7 @@ class HydrolixClient:
                         _LOGGER.debug(
                             "Sent %d events to Hydrolix (total: %d, "
                             "gzip: %d→%d bytes, %.1fx)",
-                            len(batch),
+                            len(events),
                             self.stats.events_sent,
                             len(raw_bytes),
                             len(compressed),
@@ -448,6 +467,20 @@ class HydrolixClient:
                     resp_body = await response.text()
 
                     if response.status in _RETRYABLE_STATUS_CODES:
+                        self.stats.last_error = (
+                            f"HTTP {response.status}: {resp_body[:200]}"
+                        )
+                        if not retry:
+                            self.stats.events_dropped += len(events)
+                            _LOGGER.error(
+                                "Hydrolix ingest returned %s while stopping, "
+                                "dropping %d events: %s",
+                                response.status,
+                                len(events),
+                                resp_body[:200],
+                            )
+                            return
+
                         # Honour Retry-After header if present
                         retry_after = response.headers.get("Retry-After")
                         if retry_after:
@@ -468,16 +501,13 @@ class HydrolixClient:
                             _MAX_RETRIES,
                             resp_body[:200],
                         )
-                        self.stats.last_error = (
-                            f"HTTP {response.status}: {resp_body[:200]}"
-                        )
                         await asyncio.sleep(delay)
                         backoff = min(backoff * _BACKOFF_FACTOR, _MAX_BACKOFF)
                         continue
 
                     # Non-retryable error — drop the batch
                     self.stats.last_error = f"HTTP {response.status}: {resp_body[:200]}"
-                    self.stats.events_dropped += len(batch)
+                    self.stats.events_dropped += len(events)
                     _LOGGER.error(
                         "Hydrolix ingest failed (HTTP %s): %s",
                         response.status,
@@ -488,7 +518,7 @@ class HydrolixClient:
             except aiohttp.ClientError as err:
                 self.stats.connected = False
                 self.stats.last_error = str(err)
-                if attempt < _MAX_RETRIES - 1:
+                if retry and attempt < _MAX_RETRIES - 1:
                     _LOGGER.warning(
                         "Hydrolix request failed, retrying in %.1fs "
                         "(attempt %d/%d): %s",
@@ -500,22 +530,42 @@ class HydrolixClient:
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * _BACKOFF_FACTOR, _MAX_BACKOFF)
                     continue
-                self.stats.events_dropped += len(batch)
+                self.stats.events_dropped += len(events)
                 _LOGGER.error("Failed to send events to Hydrolix: %s", err)
                 return
 
             except Exception as err:  # noqa: BLE001
                 self.stats.last_error = str(err)
-                self.stats.events_dropped += len(batch)
+                self.stats.events_dropped += len(events)
                 _LOGGER.error("Unexpected error sending to Hydrolix: %s", err)
                 return
 
         # All retries exhausted
-        self.stats.events_dropped += len(batch)
+        self.stats.events_dropped += len(events)
         _LOGGER.error(
             "Hydrolix ingest failed after %d retries, dropping %d events",
             _MAX_RETRIES,
-            len(batch),
+            len(events),
+        )
+
+    def _drop_queued(self) -> None:
+        """Count and discard events still waiting to be sent."""
+        remaining = len(self._queue)
+        if not remaining:
+            return
+        self._queue.clear()
+        self.stats.events_dropped += remaining
+        self.stats.events_queued = 0
+        _LOGGER.warning("Dropped %d queued events while stopping", remaining)
+
+    async def _async_encode_batch(
+        self, events: list[StateEvent]
+    ) -> tuple[bytes, bytes]:
+        """Serialize and gzip ``events`` in a worker thread."""
+        if self._hass is not None:
+            return await self._hass.async_add_executor_job(_encode_batch, events)
+        return await asyncio.get_running_loop().run_in_executor(
+            None, _encode_batch, events
         )
 
     def _get_headers(self) -> dict[str, str]:

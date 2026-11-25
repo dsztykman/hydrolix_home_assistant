@@ -649,3 +649,79 @@ class TestRetryBackoff:
             assert mock_sleep.call_count == 1
 
         asyncio.run(_run())
+
+
+class TestStopFlush:
+    """The flush from async_stop must not retry."""
+
+    def test_stop_single_attempt_drops_the_rest(self):
+        """A 429 on shutdown drops the batch and anything still queued."""
+
+        async def _run():
+            client = _make_client()
+            client._batch_size = 1
+            client.enqueue(_make_event())
+            client.enqueue(_make_event())
+            client._session.close = AsyncMock()
+            post = MagicMock(side_effect=[_mock_response(429, "rate limited")])
+            client._session.post = post
+
+            with patch("client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await client.async_stop()
+
+            assert post.call_count == 1
+            assert mock_sleep.call_count == 0
+            assert client.stats.events_sent == 0
+            assert client.stats.events_dropped == 2
+            assert client.stats.events_queued == 0
+            assert len(client._queue) == 0
+
+        asyncio.run(_run())
+
+    def test_stop_connection_error_does_not_retry(self):
+        """A connection error on shutdown is not retried."""
+        import aiohttp
+
+        async def _run():
+            client = _make_client()
+            client.enqueue(_make_event())
+            client._session.close = AsyncMock()
+
+            error_ctx = MagicMock()
+            error_ctx.__aenter__ = AsyncMock(
+                side_effect=aiohttp.ClientError("connection reset")
+            )
+            error_ctx.__aexit__ = AsyncMock(return_value=False)
+            post = MagicMock(side_effect=[error_ctx])
+            client._session.post = post
+
+            with patch("client.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await client.async_stop()
+
+            assert post.call_count == 1
+            assert mock_sleep.call_count == 0
+            assert client.stats.events_sent == 0
+            assert client.stats.events_dropped == 1
+
+        asyncio.run(_run())
+
+    def test_stop_success_drops_events_beyond_the_batch(self):
+        """A successful shutdown send still discards events not in that batch."""
+
+        async def _run():
+            client = _make_client()
+            client._batch_size = 1
+            client.enqueue(_make_event())
+            client.enqueue(_make_event())
+            client._session.close = AsyncMock()
+            post = MagicMock(side_effect=[_mock_response(200)])
+            client._session.post = post
+
+            await client.async_stop()
+
+            assert post.call_count == 1
+            assert client.stats.events_sent == 1
+            assert client.stats.events_dropped == 1
+            assert client.stats.events_queued == 0
+
+        asyncio.run(_run())

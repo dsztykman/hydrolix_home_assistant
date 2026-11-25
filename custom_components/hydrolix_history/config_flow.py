@@ -41,6 +41,7 @@ from .const import (
     CONF_EXCLUDE_DEVICE_CLASSES,
     CONF_EXCLUDE_DOMAINS,
     CONF_EXCLUDE_ENTITIES,
+    CONF_EXCLUDE_ENTITY_GLOBS,
     CONF_HYDROLIX_HOST,
     CONF_HYDROLIX_PROJECT,
     CONF_HYDROLIX_TABLE,
@@ -50,6 +51,7 @@ from .const import (
     CONF_INCLUDE_DEVICE_CLASSES,
     CONF_INCLUDE_DOMAINS,
     CONF_INCLUDE_ENTITIES,
+    CONF_INCLUDE_ENTITY_GLOBS,
     CONF_INGEST_URL,
     DEFAULT_BATCH_INTERVAL,
     DEFAULT_BATCH_SIZE,
@@ -129,6 +131,7 @@ class HydrolixHistoryConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     token=token,
                     use_ssl=target.use_ssl,
                     transform=target.transform,
+                    hass=self.hass,
                 )
                 try:
                     reachable = await client.async_connect()
@@ -185,6 +188,8 @@ class HydrolixHistoryOptionsFlow(config_entries.OptionsFlow):
                 CONF_EXCLUDE_DOMAINS,
                 CONF_INCLUDE_ENTITIES,
                 CONF_EXCLUDE_ENTITIES,
+                CONF_INCLUDE_ENTITY_GLOBS,
+                CONF_EXCLUDE_ENTITY_GLOBS,
                 CONF_INCLUDE_DEVICE_CLASSES,
                 CONF_EXCLUDE_DEVICE_CLASSES,
             ):
@@ -219,6 +224,19 @@ class HydrolixHistoryOptionsFlow(config_entries.OptionsFlow):
 
         entity_selector = EntitySelector(EntitySelectorConfig(multiple=True))
 
+        def glob_selector(key: str) -> SelectSelector:
+            """Free-text patterns. Existing values stay selectable."""
+            saved = current.get(key, [])
+            options = sorted(saved) if isinstance(saved, list) else []
+            return SelectSelector(
+                SelectSelectorConfig(
+                    options=options,
+                    multiple=True,
+                    custom_value=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            )
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -249,6 +267,14 @@ class HydrolixHistoryOptionsFlow(config_entries.OptionsFlow):
                         CONF_EXCLUDE_ENTITIES,
                         default=current.get(CONF_EXCLUDE_ENTITIES, []),
                     ): entity_selector,
+                    vol.Optional(
+                        CONF_INCLUDE_ENTITY_GLOBS,
+                        default=current.get(CONF_INCLUDE_ENTITY_GLOBS, []),
+                    ): glob_selector(CONF_INCLUDE_ENTITY_GLOBS),
+                    vol.Optional(
+                        CONF_EXCLUDE_ENTITY_GLOBS,
+                        default=current.get(CONF_EXCLUDE_ENTITY_GLOBS, []),
+                    ): glob_selector(CONF_EXCLUDE_ENTITY_GLOBS),
                     vol.Optional(
                         CONF_INCLUDE_DEVICE_CLASSES,
                         default=current.get(CONF_INCLUDE_DEVICE_CLASSES, []),

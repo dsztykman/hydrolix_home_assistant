@@ -110,6 +110,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         batch_size=batch_size,
         batch_interval=batch_interval,
         transform=transform,
+        hass=hass,
     )
 
     # Test connectivity

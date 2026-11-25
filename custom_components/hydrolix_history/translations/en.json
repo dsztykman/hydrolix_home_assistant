@@ -38,6 +38,8 @@
           "exclude_domains": "Exclude Domains",
           "include_entities": "Include Entity IDs",
           "exclude_entities": "Exclude Entity IDs",
+          "include_entity_globs": "Include Entity Globs",
+          "exclude_entity_globs": "Exclude Entity Globs",
           "include_device_classes": "Include Device Classes",
           "exclude_device_classes": "Exclude Device Classes"
         },
@@ -48,6 +50,8 @@
           "exclude_domains": "Never record these domains (comma-separated, e.g., automation, script)",
           "include_entities": "Only record these entities (comma-separated)",
           "exclude_entities": "Never record these entities (comma-separated)",
+          "include_entity_globs": "Only record entities matching these patterns (e.g. sensor.*_temperature)",
+          "exclude_entity_globs": "Never record entities matching these patterns (e.g. sensor.weather_*)",
           "include_device_classes": "Only record entities with these device classes (e.g., temperature, humidity)",
           "exclude_device_classes": "Never record entities with these device classes (e.g., motion, battery)"
         }
